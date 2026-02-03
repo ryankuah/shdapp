@@ -13,6 +13,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -22,7 +27,11 @@ jobs:
 
       - name: Install dependencies
         working-directory: app
-        run: npm ci --ignore-optional
+        run: npm ci
+
+      - name: Rebuild native modules for Electron
+        working-directory: app
+        run: npx electron-rebuild
 
       - name: Build and publish
         working-directory: app

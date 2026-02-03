@@ -31,9 +31,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7"
-  },
-  "optionalDependencies": {
+    "electron-updater": "^6.1.7",
     "robotjs": "^0.6.0"
   },
   "build": {
