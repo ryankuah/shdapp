@@ -29,6 +29,12 @@ jobs:
         working-directory: app
         run: npm ci
 
+      - name: Convert PNG to ICO
+        working-directory: app
+        run: |
+          npm install --no-save png-to-ico
+          node -e "const pngToIco = require('png-to-ico'); const fs = require('fs'); pngToIco('icons/icon.png').then(buf => fs.writeFileSync('icons/icon.ico', buf));"
+
       - name: Build and publish
         working-directory: app
         env:
