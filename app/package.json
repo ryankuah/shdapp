@@ -38,8 +38,7 @@
     "appId": "com.shd.speedrun-overlay",
     "productName": "SHD Speedrun Overlay",
     "directories": {
-      "output": "release",
-      "buildResources": "build"
+      "output": "release"
     },
     "files": [
       "dist/**/*"
@@ -48,7 +47,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": null
     },
     "nsis": {
       "oneClick": false,
