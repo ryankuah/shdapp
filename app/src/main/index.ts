@@ -10,9 +10,9 @@ autoUpdater.autoInstallOnAppQuit = true;
 let robot: { keyTap: (key: string) => void } | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
-  robot = require('robotjs');
+  robot = require('@jitsi/robotjs');
 } catch (error) {
-  console.warn('RobotJS not available. Run electron-rebuild if needed.', error);
+  console.warn('RobotJS not available. Key simulation features will be disabled.', error);
 }
 
 let connectWindow: BrowserWindow | null = null;

@@ -1,6 +1,6 @@
 {
   "name": "shd-speedrun-overlay",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Division 2 speedrunning actions overlay",
   "main": "dist/main/index.js",
   "scripts": {
@@ -10,7 +10,6 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "clean": "rimraf dist",
-    "postinstall": "electron-builder install-app-deps",
     "dist": "npm run build && electron-builder --win",
     "publish": "npm run build && electron-builder --win --publish always"
   },
@@ -30,19 +29,22 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7",
-    "robotjs": "^0.6.0"
+    "electron-updater": "^6.1.7"
+  },
+  "optionalDependencies": {
+    "@jitsi/robotjs": "^0.6.11"
   },
   "build": {
     "appId": "com.shd.speedrun-overlay",
     "productName": "SHD Speedrun Overlay",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
     "files": [
-      "dist/**/*",
-      "icons/**/*"
+      "dist/**/*"
     ],
+    "npmRebuild": true,
     "win": {
       "target": [
         "nsis"
