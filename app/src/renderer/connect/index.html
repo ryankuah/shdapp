@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *;">
+  <title>SHD Overlay - Connect</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #eee;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .container {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 12px;
+      padding: 30px;
+      width: 100%;
+      max-width: 350px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 8px;
+      color: #ff6b35;
+    }
+    p.subtitle {
+      font-size: 0.85rem;
+      color: #888;
+      margin-bottom: 24px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: #aaa;
+      margin-bottom: 6px;
+    }
+    input[type="text"],
+    select {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #0f0f1a;
+      color: #fff;
+      font-size: 0.95rem;
+      margin-bottom: 16px;
+    }
+    input[type="text"]:focus,
+    select:focus {
+      outline: none;
+      border-color: #ff6b35;
+    }
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 6px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    #connectBtn {
+      background: #ff6b35;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    #connectBtn:hover {
+      background: #ff8555;
+    }
+    #connectBtn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
+    #disconnectBtn {
+      background: #333;
+      color: #ccc;
+      display: none;
+    }
+    #disconnectBtn:hover {
+      background: #444;
+    }
+    .status {
+      margin-top: 16px;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      text-align: center;
+    }
+    .status.connected {
+      background: rgba(0, 200, 100, 0.2);
+      color: #0c6;
+    }
+    .status.disconnected {
+      background: rgba(255, 100, 100, 0.2);
+      color: #f66;
+    }
+    .status.connecting {
+      background: rgba(255, 180, 50, 0.2);
+      color: #fb3;
+    }
+    .hotkey-info {
+      margin-top: 20px;
+      padding: 12px;
+      background: rgba(255, 107, 53, 0.1);
+      border-radius: 6px;
+      font-size: 0.8rem;
+      color: #aaa;
+    }
+    .hotkey-info kbd {
+      background: #333;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .step {
+      margin-bottom: 16px;
+    }
+    .hidden {
+      display: none;
+    }
+    .name-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .name-option {
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #333;
+      background: #0f0f1a;
+      color: #fff;
+      font-size: 0.9rem;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, transform 0.1s;
+    }
+    .name-option:hover {
+      border-color: #ff6b35;
+      background: #1a1a2e;
+    }
+    .name-option:active {
+      transform: scale(0.98);
+    }
+    .name-option.selected {
+      border-color: #ff6b35;
+      background: rgba(255, 107, 53, 0.2);
+      color: #ff6b35;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>SHD Speedrun Overlay</h1>
+    <p class="subtitle">Division 2 Ready Sync</p>
+    
+    <div id="urlStep" class="step">
+      <label for="serverUrl">Server URL</label>
+      <input type="text" id="serverUrl" placeholder="wss://your-app.fly.dev/ws" value="ws://localhost:3000/ws">
+      
+      <button id="connectBtn">Connect</button>
+    </div>
+
+    <div id="nameStep" class="step hidden">
+      <label>Select Name</label>
+      <div id="nameGrid" class="name-grid">
+        <button type="button" class="name-option" data-name="Flamingskull">Flamingskull</button>
+        <button type="button" class="name-option" data-name="Chonko">Chonko</button>
+        <button type="button" class="name-option" data-name="Thunndarr">Thunndarr</button>
+        <button type="button" class="name-option" data-name="SS-R">SS-R</button>
+        <button type="button" class="name-option" data-name="Pear123451">Pear123451</button>
+        <button type="button" class="name-option" data-name="YellowBirb">YellowBirb</button>
+        <button type="button" class="name-option" data-name="VibronicWand">VibronicWand</button>
+        <button type="button" class="name-option" data-name="Sunraiser">Sunraiser</button>
+      </div>
+
+      <button id="disconnectBtn">Disconnect</button>
+    </div>
+    
+    <div id="status" class="status disconnected">Disconnected</div>
+    
+    <div class="hotkey-info">
+      Press <kbd>Ctrl+Shift+R</kbd> to toggle Ready state for all connected users.
+    </div>
+  </div>
+  
+  <script>require('./index.js');</script>
+</body>
+</html>

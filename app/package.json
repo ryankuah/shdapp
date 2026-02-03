@@ -1,0 +1,65 @@
+{
+  "name": "shd-speedrun-overlay",
+  "version": "1.0.0",
+  "description": "Division 2 speedrunning actions overlay",
+  "main": "dist/main/index.js",
+  "scripts": {
+    "build": "tsc && npm run copy-html",
+    "copy-html": "node -e \"const fs=require('fs');const path=require('path');['connect','overlay'].forEach(w=>{const src=path.join('src/renderer',w);const dst=path.join('dist/renderer',w);fs.mkdirSync(dst,{recursive:true});fs.copyFileSync(path.join(src,'index.html'),path.join(dst,'index.html'))});\"",
+    "watch": "tsc --watch",
+    "start": "npm run build && electron .",
+    "dev": "npm run build && electron .",
+    "clean": "rimraf dist",
+    "rebuild": "npm rebuild robotjs --runtime=electron --target=28.3.3 --disturl=https://electronjs.org/headers --abi=119",
+    "dist": "npm run build && electron-builder --win",
+    "publish": "npm run build && electron-builder --win --publish always"
+  },
+  "keywords": [
+    "electron",
+    "division2",
+    "speedrun",
+    "overlay"
+  ],
+  "author": "SHD",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.5",
+    "electron": "^28.1.0",
+    "electron-builder": "^24.13.3",
+    "electron-rebuild": "^3.2.9",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.1.7",
+    "robotjs": "^0.6.0"
+  },
+  "build": {
+    "appId": "com.shd.speedrun-overlay",
+    "productName": "SHD Speedrun Overlay",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "icons/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "icons/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icons/icon.png",
+      "uninstallerIcon": "icons/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "ryankuah",
+      "repo": "shdapp"
+    }
+  }
+}
