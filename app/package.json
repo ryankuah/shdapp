@@ -32,7 +32,7 @@
     "electron-updater": "^6.1.7"
   },
   "optionalDependencies": {
-    "@jitsi/robotjs": "^0.6.11"
+    "@jitsi/robotjs": "^0.6.21"
   },
   "build": {
     "appId": "com.shd.speedrun-overlay",
