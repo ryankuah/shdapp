@@ -24,16 +24,25 @@ interface StartMessage extends WSMessage {
   starterAgentId: number;
 }
 
+interface CountdownMessage extends WSMessage {
+  type: 'countdown';
+  endTime: number;
+  duration: number;
+}
+
+interface PhaseMessage extends WSMessage {
+  type: 'phase';
+  phase: string;
+}
+
+const HARDCODED_SERVER_URL = 'wss://shd-overlay-server.fly.dev/ws';
+
 // DOM elements
-const serverUrlInput = document.getElementById('serverUrl') as HTMLInputElement;
-const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnectBtn') as HTMLButtonElement;
 const nameGrid = document.getElementById('nameGrid') as HTMLDivElement;
 const delayInput = document.getElementById('startDelay') as HTMLInputElement;
-const confirmNameBtn = document.getElementById('confirmNameBtn') as HTMLButtonElement;
-const saveSettingsBtn = document.getElementById('saveSettingsBtn') as HTMLButtonElement;
+const resetRaidBtn = document.getElementById('resetRaidBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
-const urlStep = document.getElementById('urlStep') as HTMLDivElement;
 const nameStep = document.getElementById('nameStep') as HTMLDivElement;
 const settingsStep = document.getElementById('settingsStep') as HTMLDivElement;
 const nameButtons = Array.from(nameGrid.querySelectorAll('button')) as HTMLButtonElement[];
@@ -50,15 +59,12 @@ const DEFAULT_START_DELAY_SECONDS = 2;
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
 
 delayInput.disabled = true;
-confirmNameBtn.disabled = true;
-saveSettingsBtn.disabled = true;
 
 function updateStatus(status: 'connected' | 'disconnected' | 'connecting', message: string) {
   statusDiv.className = `status ${status}`;
   statusDiv.textContent = message;
-  
+
   if (status === 'connected') {
-    urlStep.classList.add('hidden');
     if (hasConfirmedName) {
       nameStep.classList.add('hidden');
       settingsStep.classList.remove('hidden');
@@ -66,34 +72,22 @@ function updateStatus(status: 'connected' | 'disconnected' | 'connecting', messa
       nameStep.classList.remove('hidden');
       settingsStep.classList.add('hidden');
     }
-    serverUrlInput.disabled = true;
-    connectBtn.disabled = false;
   } else {
-    urlStep.classList.remove('hidden');
-    nameStep.classList.add('hidden');
+    nameStep.classList.remove('hidden');
     settingsStep.classList.add('hidden');
-    serverUrlInput.disabled = false;
-    connectBtn.disabled = status === 'connecting';
     hasConfirmedName = false;
     namesByAgent = {};
     clearSelectedName();
   }
-  updateConfirmState();
   updateSettingsState();
   updateNameButtons();
 }
 
 function connect() {
-  const url = serverUrlInput.value.trim();
-  if (!url) {
-    updateStatus('disconnected', 'Please enter a server URL');
-    return;
-  }
-
   updateStatus('connecting', 'Connecting...');
-  
+
   try {
-    ws = new WebSocket(url);
+    ws = new WebSocket(HARDCODED_SERVER_URL);
 
     ws.onopen = () => {
       console.log('[WS] Connected');
@@ -104,8 +98,9 @@ function connect() {
 
     ws.onclose = () => {
       console.log('[WS] Disconnected');
-      updateStatus('disconnected', 'Disconnected');
+      updateStatus('disconnected', 'Disconnected - Reconnecting...');
       ws = null;
+      setTimeout(connect, 3000);
     };
 
     ws.onerror = (error) => {
@@ -128,9 +123,15 @@ function connect() {
           const readyState = message as ReadyStateMessage;
           updateNames(readyState.names);
           ipcRenderer.send('update-overlay', readyState);
+        } else if (message.type === 'countdown') {
+          const countdownMsg = message as CountdownMessage;
+          ipcRenderer.send('update-overlay', countdownMsg);
         } else if (message.type === 'start') {
           const startMessage = message as StartMessage;
           scheduleStartActions(startMessage.timestamp, startMessage.starterAgentId);
+        } else if (message.type === 'phase') {
+          const phaseMsg = message as PhaseMessage;
+          ipcRenderer.send('update-overlay', phaseMsg);
         } else if (message.type === 'error') {
           updateStatus('disconnected', String(message.message ?? 'Server error'));
         }
@@ -175,6 +176,13 @@ function sendStartRequest() {
   }
 }
 
+function sendResetRaid() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'reset_raid' }));
+    console.log('[WS] Sent reset_raid');
+  }
+}
+
 function scheduleStartActions(timestamp: number, starterAgentId: number) {
   if (!agentId) {
     return;
@@ -183,6 +191,12 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
   setTimeout(() => {
     if (agentId === starterAgentId) {
       ipcRenderer.send('start-space');
+      // Send phase change after key press
+      setTimeout(() => {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'set_phase', phase: 'Railyard' }));
+        }
+      }, 200);
     } else {
       ipcRenderer.send('start-ctrl-tap');
     }
@@ -194,7 +208,6 @@ function setSelectedName(name: string) {
     button.classList.toggle('selected', button.dataset.name === name);
   });
   selectedName = name;
-  updateConfirmState();
 }
 
 function clearSelectedName() {
@@ -202,7 +215,6 @@ function clearSelectedName() {
     button.classList.remove('selected');
   });
   selectedName = null;
-  updateConfirmState();
 }
 
 function saveName(name: string) {
@@ -234,15 +246,9 @@ function setDelaySeconds(seconds: number) {
   delayInput.value = String(seconds);
 }
 
-function updateConfirmState() {
-  const isConnected = Boolean(ws && ws.readyState === WebSocket.OPEN);
-  confirmNameBtn.disabled = !isConnected || !selectedName;
-}
-
 function updateSettingsState() {
   const isConnected = Boolean(ws && ws.readyState === WebSocket.OPEN);
   delayInput.disabled = !isConnected || !hasConfirmedName;
-  saveSettingsBtn.disabled = !isConnected || !hasConfirmedName;
 }
 
 function updateNames(names?: Record<number, string>) {
@@ -287,40 +293,27 @@ ipcRenderer.on('hotkey-start', () => {
 });
 
 // Initialize
-connectBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
-confirmNameBtn.addEventListener('click', () => {
-  if (selectedName) {
-    saveName(selectedName);
-    hasConfirmedName = true;
-    nameStep.classList.add('hidden');
-    settingsStep.classList.remove('hidden');
-    updateSettingsState();
-  } else {
-    updateStatus('connected', 'Please select your name');
-  }
-});
-saveSettingsBtn.addEventListener('click', () => {
+resetRaidBtn.addEventListener('click', sendResetRaid);
+delayInput.addEventListener('input', () => {
   const delaySeconds = getDelaySeconds();
   startDelayMs = delaySeconds * 1000;
   localStorage.setItem(START_DELAY_STORAGE_KEY, String(delaySeconds));
-  updateStatus('connected', `Settings saved. Delay set to ${delaySeconds}s`);
 });
 nameGrid.addEventListener('click', (event) => {
   const target = event.target as HTMLElement | null;
   const button = target?.closest('button');
   const name = button?.dataset?.name;
-  if (name) {
-    setSelectedName(name);
+  if (name && !button?.disabled) {
+    saveName(name);
+    hasConfirmedName = true;
+    nameStep.classList.add('hidden');
+    settingsStep.classList.remove('hidden');
+    updateSettingsState();
   }
 });
 
-// Load saved URL
-const savedUrl = localStorage.getItem('shd-server-url');
-if (savedUrl) {
-  serverUrlInput.value = savedUrl;
-}
-
+// Load saved name
 const savedName = localStorage.getItem('shd-display-name');
 if (savedName) {
   const hasOption = nameButtons.some((button) => button.dataset.name === savedName);
@@ -329,6 +322,7 @@ if (savedName) {
   }
 }
 
+// Load saved delay
 const savedDelay = localStorage.getItem(START_DELAY_STORAGE_KEY);
 if (savedDelay) {
   const parsed = Number(savedDelay);
@@ -340,7 +334,7 @@ if (savedDelay) {
   startDelayMs = DEFAULT_START_DELAY_SECONDS * 1000;
 }
 
-// Save URL on change
-serverUrlInput.addEventListener('change', () => {
-  localStorage.setItem('shd-server-url', serverUrlInput.value);
+// Auto-connect on load
+document.addEventListener('DOMContentLoaded', () => {
+  connect();
 });

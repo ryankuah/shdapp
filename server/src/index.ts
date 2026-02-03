@@ -174,12 +174,29 @@ function handleMessage(ws: WebSocket, data: string) {
           }));
           break;
         }
+        const countdownDuration = 5000; // 5 seconds
+        const endTime = Date.now() + countdownDuration;
+        broadcast({ type: 'countdown', endTime, duration: countdownDuration });
         const startMessage: StartBroadcastMessage = {
           type: 'start',
-          timestamp: Date.now(),
+          timestamp: endTime,
           starterAgentId: agentId
         };
         broadcast(startMessage);
+        break;
+      }
+
+      case 'reset_raid': {
+        for (const [id] of agentReadyState) {
+          agentReadyState.set(id, false);
+        }
+        broadcastReadyState();
+        break;
+      }
+
+      case 'set_phase': {
+        const phaseMsg = message as { type: string; phase: string };
+        broadcast({ type: 'phase', phase: phaseMsg.phase });
         break;
       }
       

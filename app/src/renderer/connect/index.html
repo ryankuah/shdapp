@@ -77,41 +77,13 @@
     button:active {
       transform: scale(0.98);
     }
-    #connectBtn {
-      background: #ff6b35;
+    #resetRaidBtn {
+      background: #ff4444;
       color: #fff;
       margin-bottom: 10px;
     }
-    #confirmNameBtn {
-      background: #ff6b35;
-      color: #fff;
-      margin-bottom: 10px;
-    }
-    #confirmNameBtn:hover {
-      background: #ff8555;
-    }
-    #confirmNameBtn:disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-    #saveSettingsBtn {
-      background: #ff6b35;
-      color: #fff;
-      margin-bottom: 10px;
-    }
-    #saveSettingsBtn:hover {
-      background: #ff8555;
-    }
-    #saveSettingsBtn:disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-    #connectBtn:hover {
-      background: #ff8555;
-    }
-    #connectBtn:disabled {
-      background: #555;
-      cursor: not-allowed;
+    #resetRaidBtn:hover {
+      background: #ff6666;
     }
     #disconnectBtn {
       background: #333;
@@ -202,14 +174,7 @@
     <h1>SHD Speedrun Overlay</h1>
     <p class="subtitle">Division 2 Ready Sync</p>
     
-    <div id="urlStep" class="step">
-      <label for="serverUrl">Server URL</label>
-      <input type="text" id="serverUrl" placeholder="wss://your-app.fly.dev/ws" value="ws://localhost:3000/ws">
-      
-      <button id="connectBtn">Connect</button>
-    </div>
-
-    <div id="nameStep" class="step hidden">
+    <div id="nameStep" class="step">
       <label>Select Name</label>
       <div id="nameGrid" class="name-grid">
         <button type="button" class="name-option" data-name="Flamingskull">Flamingskull</button>
@@ -221,15 +186,13 @@
         <button type="button" class="name-option" data-name="VibronicWand">VibronicWand</button>
         <button type="button" class="name-option" data-name="Sunraiser">Sunraiser</button>
       </div>
-
-      <button id="confirmNameBtn">Confirm Name</button>
     </div>
 
     <div id="settingsStep" class="step hidden">
       <label for="startDelay">Start Delay (seconds)</label>
       <input type="number" id="startDelay" min="0" step="0.1" value="2">
 
-      <button id="saveSettingsBtn">Save Settings</button>
+      <button id="resetRaidBtn">Reset Raid</button>
       <button id="disconnectBtn">Disconnect</button>
     </div>
     

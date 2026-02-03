@@ -13,11 +13,28 @@ interface AgentAssignedMessage {
   names: Record<number, string>;
 }
 
-type OverlayMessage = ReadyStateMessage | AgentAssignedMessage;
+interface CountdownMessage {
+  type: 'countdown';
+  endTime: number;
+  duration: number;
+}
+
+interface PhaseMessage {
+  type: 'phase';
+  phase: string;
+}
+
+type OverlayMessage = ReadyStateMessage | AgentAssignedMessage | CountdownMessage | PhaseMessage;
+
+type OverlayState = 'agents' | 'countdown' | 'phase';
 
 const MAX_AGENTS = 8;
 const phaseStatus = document.getElementById('phaseStatus') as HTMLDivElement;
 const agentList = document.getElementById('agentList') as HTMLDivElement;
+const countdown = document.getElementById('countdown') as HTMLDivElement;
+const countdownValue = document.getElementById('countdownValue') as HTMLSpanElement;
+const phaseDisplay = document.getElementById('phaseDisplay') as HTMLDivElement;
+const phaseText = document.getElementById('phaseText') as HTMLSpanElement;
 
 const agentRows = new Map<number, HTMLDivElement>();
 const agentDots = new Map<number, HTMLSpanElement>();
@@ -27,6 +44,34 @@ const agentNames = new Map<number, HTMLSpanElement>();
 let selfAgentId: number | null = null;
 let agentStates: Record<number, boolean> = {};
 let agentNameState: Record<number, string> = {};
+let overlayState: OverlayState = 'agents';
+let countdownInterval: ReturnType<typeof setInterval> | null = null;
+
+function setOverlayState(state: OverlayState) {
+  overlayState = state;
+  phaseStatus.classList.toggle('hidden', state !== 'agents');
+  agentList.classList.toggle('hidden', state !== 'agents');
+  countdown.classList.toggle('hidden', state !== 'countdown');
+  phaseDisplay.classList.toggle('hidden', state !== 'phase');
+}
+
+function startCountdown(endTime: number) {
+  if (countdownInterval) clearInterval(countdownInterval);
+  setOverlayState('countdown');
+
+  function update() {
+    const remaining = Math.max(0, endTime - Date.now());
+    countdownValue.textContent = String(Math.ceil(remaining / 1000));
+    if (remaining <= 0) {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+    }
+  }
+  update();
+  countdownInterval = setInterval(update, 100);
+}
 
 function normalizeAgentStates(states: Record<number, boolean>): Record<number, boolean> {
   const normalized: Record<number, boolean> = {};
@@ -133,8 +178,17 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
   if (data.type === 'agent_assigned') {
     selfAgentId = data.agentId;
     applyAgentStates(data.agents, data.names);
+    setOverlayState('agents');
   } else if (data.type === 'ready_state') {
     applyAgentStates(data.agents, data.names);
+    if (overlayState === 'agents') {
+      // Stay in agents state, don't change
+    }
+  } else if (data.type === 'countdown') {
+    startCountdown(data.endTime);
+  } else if (data.type === 'phase') {
+    phaseText.textContent = data.phase;
+    setOverlayState('phase');
   }
 });
 

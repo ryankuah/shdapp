@@ -90,12 +90,43 @@
       font-size: 0.75rem;
       letter-spacing: 1px;
     }
+    .countdown {
+      position: fixed;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 3rem;
+      font-weight: 900;
+      color: #ff6b35;
+      text-shadow: 0 0 20px rgba(255, 107, 53, 0.8);
+    }
+    .phase-display {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 4rem;
+      font-weight: 900;
+      color: #00ff88;
+      text-transform: uppercase;
+      letter-spacing: 8px;
+      text-shadow: 0 0 30px rgba(0, 255, 136, 0.8);
+    }
+    .hidden {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
   <div id="phaseStatus" class="phase-status unready">Unready</div>
   <div id="agentList" class="agent-list"></div>
-  
+  <div id="countdown" class="countdown hidden">
+    <span id="countdownValue">5</span>
+  </div>
+  <div id="phaseDisplay" class="phase-display hidden">
+    <span id="phaseText">Railyard</span>
+  </div>
+
   <script>require('./index.js');</script>
 </body>
 </html>
