@@ -31,9 +31,11 @@ const disconnectBtn = document.getElementById('disconnectBtn') as HTMLButtonElem
 const nameGrid = document.getElementById('nameGrid') as HTMLDivElement;
 const delayInput = document.getElementById('startDelay') as HTMLInputElement;
 const confirmNameBtn = document.getElementById('confirmNameBtn') as HTMLButtonElement;
+const saveSettingsBtn = document.getElementById('saveSettingsBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const urlStep = document.getElementById('urlStep') as HTMLDivElement;
 const nameStep = document.getElementById('nameStep') as HTMLDivElement;
+const settingsStep = document.getElementById('settingsStep') as HTMLDivElement;
 const nameButtons = Array.from(nameGrid.querySelectorAll('button')) as HTMLButtonElement[];
 
 let ws: WebSocket | null = null;
@@ -41,12 +43,15 @@ let agentId: number | null = null;
 let isReady = false;
 let selectedName: string | null = null;
 let startDelayMs = 2000;
+let hasConfirmedName = false;
+let namesByAgent: Record<number, string> = {};
 
 const DEFAULT_START_DELAY_SECONDS = 2;
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
 
 delayInput.disabled = true;
 confirmNameBtn.disabled = true;
+saveSettingsBtn.disabled = true;
 
 function updateStatus(status: 'connected' | 'disconnected' | 'connecting', message: string) {
   statusDiv.className = `status ${status}`;
@@ -54,18 +59,28 @@ function updateStatus(status: 'connected' | 'disconnected' | 'connecting', messa
   
   if (status === 'connected') {
     urlStep.classList.add('hidden');
-    nameStep.classList.remove('hidden');
+    if (hasConfirmedName) {
+      nameStep.classList.add('hidden');
+      settingsStep.classList.remove('hidden');
+    } else {
+      nameStep.classList.remove('hidden');
+      settingsStep.classList.add('hidden');
+    }
     serverUrlInput.disabled = true;
     connectBtn.disabled = false;
-    delayInput.disabled = false;
   } else {
     urlStep.classList.remove('hidden');
     nameStep.classList.add('hidden');
+    settingsStep.classList.add('hidden');
     serverUrlInput.disabled = false;
     connectBtn.disabled = status === 'connecting';
-    delayInput.disabled = true;
+    hasConfirmedName = false;
+    namesByAgent = {};
+    clearSelectedName();
   }
   updateConfirmState();
+  updateSettingsState();
+  updateNameButtons();
 }
 
 function connect() {
@@ -107,9 +122,12 @@ function connect() {
           const assigned = message as AgentAssignedMessage;
           agentId = assigned.agentId;
           isReady = assigned.agents[assigned.agentId] ?? false;
+          updateNames(assigned.names);
           ipcRenderer.send('update-overlay', assigned);
         } else if (message.type === 'ready_state') {
-          ipcRenderer.send('update-overlay', message as ReadyStateMessage);
+          const readyState = message as ReadyStateMessage;
+          updateNames(readyState.names);
+          ipcRenderer.send('update-overlay', readyState);
         } else if (message.type === 'start') {
           const startMessage = message as StartMessage;
           scheduleStartActions(startMessage.timestamp, startMessage.starterAgentId);
@@ -179,21 +197,26 @@ function setSelectedName(name: string) {
   updateConfirmState();
 }
 
+function clearSelectedName() {
+  nameButtons.forEach((button) => {
+    button.classList.remove('selected');
+  });
+  selectedName = null;
+  updateConfirmState();
+}
+
 function saveName(name: string) {
   const cleanName = name.trim();
   if (!cleanName) {
     updateStatus('connected', 'Please select your name');
     return;
   }
-  const delaySeconds = getDelaySeconds();
-  startDelayMs = delaySeconds * 1000;
   if (ws && ws.readyState === WebSocket.OPEN) {
     const message = { type: 'set_name', name: cleanName };
     ws.send(JSON.stringify(message));
     localStorage.setItem('shd-display-name', cleanName);
-    localStorage.setItem(START_DELAY_STORAGE_KEY, String(delaySeconds));
     setSelectedName(cleanName);
-    updateStatus('connected', `Name saved. Delay set to ${delaySeconds}s`);
+    updateStatus('connected', 'Name saved');
   } else {
     updateStatus('disconnected', 'Not connected');
   }
@@ -216,6 +239,42 @@ function updateConfirmState() {
   confirmNameBtn.disabled = !isConnected || !selectedName;
 }
 
+function updateSettingsState() {
+  const isConnected = Boolean(ws && ws.readyState === WebSocket.OPEN);
+  delayInput.disabled = !isConnected || !hasConfirmedName;
+  saveSettingsBtn.disabled = !isConnected || !hasConfirmedName;
+}
+
+function updateNames(names?: Record<number, string>) {
+  if (!names) {
+    return;
+  }
+  namesByAgent = names;
+  updateNameButtons();
+}
+
+function updateNameButtons() {
+  const takenNames = new Set<string>();
+  Object.entries(namesByAgent).forEach(([id, name]) => {
+    const numericId = Number(id);
+    if (!Number.isNaN(numericId) && agentId !== numericId) {
+      takenNames.add(name);
+    }
+  });
+
+  nameButtons.forEach((button) => {
+    const name = button.dataset.name;
+    const isTaken = Boolean(name && takenNames.has(name));
+    button.disabled = isTaken;
+  });
+
+  if (selectedName && takenNames.has(selectedName)) {
+    clearSelectedName();
+    statusDiv.className = 'status connected';
+    statusDiv.textContent = 'That name is already taken';
+  }
+}
+
 // Listen for hotkey from main process
 ipcRenderer.on('hotkey-ready', () => {
   console.log('Hotkey received');
@@ -233,9 +292,19 @@ disconnectBtn.addEventListener('click', disconnect);
 confirmNameBtn.addEventListener('click', () => {
   if (selectedName) {
     saveName(selectedName);
+    hasConfirmedName = true;
+    nameStep.classList.add('hidden');
+    settingsStep.classList.remove('hidden');
+    updateSettingsState();
   } else {
     updateStatus('connected', 'Please select your name');
   }
+});
+saveSettingsBtn.addEventListener('click', () => {
+  const delaySeconds = getDelaySeconds();
+  startDelayMs = delaySeconds * 1000;
+  localStorage.setItem(START_DELAY_STORAGE_KEY, String(delaySeconds));
+  updateStatus('connected', `Settings saved. Delay set to ${delaySeconds}s`);
 });
 nameGrid.addEventListener('click', (event) => {
   const target = event.target as HTMLElement | null;

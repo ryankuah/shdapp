@@ -94,6 +94,18 @@
       background: #555;
       cursor: not-allowed;
     }
+    #saveSettingsBtn {
+      background: #ff6b35;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    #saveSettingsBtn:hover {
+      background: #ff8555;
+    }
+    #saveSettingsBtn:disabled {
+      background: #555;
+      cursor: not-allowed;
+    }
     #connectBtn:hover {
       background: #ff8555;
     }
@@ -171,6 +183,12 @@
     .name-option:active {
       transform: scale(0.98);
     }
+    .name-option:disabled {
+      border-color: #333;
+      background: #0b0b12;
+      color: #666;
+      cursor: not-allowed;
+    }
     .name-option.selected {
       border-color: #ff6b35;
       background: rgba(255, 107, 53, 0.2);
@@ -204,10 +222,14 @@
         <button type="button" class="name-option" data-name="Sunraiser">Sunraiser</button>
       </div>
 
+      <button id="confirmNameBtn">Confirm Name</button>
+    </div>
+
+    <div id="settingsStep" class="step hidden">
       <label for="startDelay">Start Delay (seconds)</label>
       <input type="number" id="startDelay" min="0" step="0.1" value="2">
 
-      <button id="confirmNameBtn">Confirm Name</button>
+      <button id="saveSettingsBtn">Save Settings</button>
       <button id="disconnectBtn">Disconnect</button>
     </div>
     
