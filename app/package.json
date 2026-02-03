@@ -1,6 +1,6 @@
 {
   "name": "shd-speedrun-overlay",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Division 2 speedrunning actions overlay",
   "main": "dist/main/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "start": "npm run build && electron .",
     "dev": "npm run build && electron .",
     "clean": "rimraf dist",
-    "rebuild": "npm rebuild robotjs --runtime=electron --target=28.3.3 --disturl=https://electronjs.org/headers --abi=119",
+    "postinstall": "electron-builder install-app-deps",
     "dist": "npm run build && electron-builder --win",
     "publish": "npm run build && electron-builder --win --publish always"
   },
@@ -26,7 +26,6 @@
     "@types/node": "^20.11.5",
     "electron": "^28.1.0",
     "electron-builder": "^24.13.3",
-    "electron-rebuild": "^3.2.9",
     "rimraf": "^5.0.5",
     "typescript": "^5.3.3"
   },
@@ -47,14 +46,11 @@
     "win": {
       "target": [
         "nsis"
-      ],
-      "icon": "icons/icon.png"
+      ]
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "installerIcon": "icons/icon.png",
-      "uninstallerIcon": "icons/icon.png"
+      "allowToChangeInstallationDirectory": true
     },
     "publish": {
       "provider": "github",

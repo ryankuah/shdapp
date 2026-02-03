@@ -29,10 +29,6 @@ jobs:
         working-directory: app
         run: npm ci
 
-      - name: Rebuild native modules for Electron
-        working-directory: app
-        run: npx electron-rebuild
-
       - name: Build and publish
         working-directory: app
         env:
