@@ -47,6 +47,7 @@
       margin-bottom: 6px;
     }
     input[type="text"],
+    input[type="number"],
     select {
       width: 100%;
       padding: 12px;
@@ -58,6 +59,7 @@
       margin-bottom: 16px;
     }
     input[type="text"]:focus,
+    input[type="number"]:focus,
     select:focus {
       outline: none;
       border-color: #ff6b35;
@@ -79,6 +81,18 @@
       background: #ff6b35;
       color: #fff;
       margin-bottom: 10px;
+    }
+    #confirmNameBtn {
+      background: #ff6b35;
+      color: #fff;
+      margin-bottom: 10px;
+    }
+    #confirmNameBtn:hover {
+      background: #ff8555;
+    }
+    #confirmNameBtn:disabled {
+      background: #555;
+      cursor: not-allowed;
     }
     #connectBtn:hover {
       background: #ff8555;
@@ -190,6 +204,10 @@
         <button type="button" class="name-option" data-name="Sunraiser">Sunraiser</button>
       </div>
 
+      <label for="startDelay">Start Delay (seconds)</label>
+      <input type="number" id="startDelay" min="0" step="0.1" value="2">
+
+      <button id="confirmNameBtn">Confirm Name</button>
       <button id="disconnectBtn">Disconnect</button>
     </div>
     

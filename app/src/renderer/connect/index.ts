@@ -29,6 +29,8 @@ const serverUrlInput = document.getElementById('serverUrl') as HTMLInputElement;
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement;
 const disconnectBtn = document.getElementById('disconnectBtn') as HTMLButtonElement;
 const nameGrid = document.getElementById('nameGrid') as HTMLDivElement;
+const delayInput = document.getElementById('startDelay') as HTMLInputElement;
+const confirmNameBtn = document.getElementById('confirmNameBtn') as HTMLButtonElement;
 const statusDiv = document.getElementById('status') as HTMLDivElement;
 const urlStep = document.getElementById('urlStep') as HTMLDivElement;
 const nameStep = document.getElementById('nameStep') as HTMLDivElement;
@@ -37,6 +39,14 @@ const nameButtons = Array.from(nameGrid.querySelectorAll('button')) as HTMLButto
 let ws: WebSocket | null = null;
 let agentId: number | null = null;
 let isReady = false;
+let selectedName: string | null = null;
+let startDelayMs = 2000;
+
+const DEFAULT_START_DELAY_SECONDS = 2;
+const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
+
+delayInput.disabled = true;
+confirmNameBtn.disabled = true;
 
 function updateStatus(status: 'connected' | 'disconnected' | 'connecting', message: string) {
   statusDiv.className = `status ${status}`;
@@ -47,12 +57,15 @@ function updateStatus(status: 'connected' | 'disconnected' | 'connecting', messa
     nameStep.classList.remove('hidden');
     serverUrlInput.disabled = true;
     connectBtn.disabled = false;
+    delayInput.disabled = false;
   } else {
     urlStep.classList.remove('hidden');
     nameStep.classList.add('hidden');
     serverUrlInput.disabled = false;
     connectBtn.disabled = status === 'connecting';
+    delayInput.disabled = true;
   }
+  updateConfirmState();
 }
 
 function connect() {
@@ -148,7 +161,7 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
   if (!agentId) {
     return;
   }
-  const delay = Math.max(0, timestamp + 3000 - Date.now());
+  const delay = Math.max(0, timestamp + startDelayMs - Date.now());
   setTimeout(() => {
     if (agentId === starterAgentId) {
       ipcRenderer.send('start-space');
@@ -162,6 +175,8 @@ function setSelectedName(name: string) {
   nameButtons.forEach((button) => {
     button.classList.toggle('selected', button.dataset.name === name);
   });
+  selectedName = name;
+  updateConfirmState();
 }
 
 function saveName(name: string) {
@@ -170,15 +185,35 @@ function saveName(name: string) {
     updateStatus('connected', 'Please select your name');
     return;
   }
+  const delaySeconds = getDelaySeconds();
+  startDelayMs = delaySeconds * 1000;
   if (ws && ws.readyState === WebSocket.OPEN) {
     const message = { type: 'set_name', name: cleanName };
     ws.send(JSON.stringify(message));
     localStorage.setItem('shd-display-name', cleanName);
+    localStorage.setItem(START_DELAY_STORAGE_KEY, String(delaySeconds));
     setSelectedName(cleanName);
-    updateStatus('connected', 'Name saved');
+    updateStatus('connected', `Name saved. Delay set to ${delaySeconds}s`);
   } else {
     updateStatus('disconnected', 'Not connected');
   }
+}
+
+function getDelaySeconds() {
+  const parsed = Number(delayInput.value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_START_DELAY_SECONDS;
+  }
+  return parsed;
+}
+
+function setDelaySeconds(seconds: number) {
+  delayInput.value = String(seconds);
+}
+
+function updateConfirmState() {
+  const isConnected = Boolean(ws && ws.readyState === WebSocket.OPEN);
+  confirmNameBtn.disabled = !isConnected || !selectedName;
 }
 
 // Listen for hotkey from main process
@@ -195,12 +230,19 @@ ipcRenderer.on('hotkey-start', () => {
 // Initialize
 connectBtn.addEventListener('click', connect);
 disconnectBtn.addEventListener('click', disconnect);
+confirmNameBtn.addEventListener('click', () => {
+  if (selectedName) {
+    saveName(selectedName);
+  } else {
+    updateStatus('connected', 'Please select your name');
+  }
+});
 nameGrid.addEventListener('click', (event) => {
   const target = event.target as HTMLElement | null;
   const button = target?.closest('button');
   const name = button?.dataset?.name;
   if (name) {
-    saveName(name);
+    setSelectedName(name);
   }
 });
 
@@ -216,6 +258,17 @@ if (savedName) {
   if (hasOption) {
     setSelectedName(savedName);
   }
+}
+
+const savedDelay = localStorage.getItem(START_DELAY_STORAGE_KEY);
+if (savedDelay) {
+  const parsed = Number(savedDelay);
+  const delaySeconds = Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_START_DELAY_SECONDS;
+  setDelaySeconds(delaySeconds);
+  startDelayMs = delaySeconds * 1000;
+} else {
+  setDelaySeconds(DEFAULT_START_DELAY_SECONDS);
+  startDelayMs = DEFAULT_START_DELAY_SECONDS * 1000;
 }
 
 // Save URL on change
