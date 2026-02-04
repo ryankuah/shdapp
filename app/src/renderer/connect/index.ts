@@ -35,7 +35,12 @@ interface PhaseMessage extends WSMessage {
   phase: string;
 }
 
-const HARDCODED_SERVER_URL = 'wss://shd-overlay-server.fly.dev/ws';
+const isDev =
+  process.env.NODE_ENV === 'development' ||
+  process.env.ELECTRON_IS_DEV === 'true' ||
+  process.defaultApp === true;
+
+const SERVER_URL = isDev ? 'ws://localhost:3000/ws' : 'wss://shd-overlay-server.fly.dev/ws';
 
 // DOM elements
 const disconnectBtn = document.getElementById('disconnectBtn') as HTMLButtonElement;
@@ -55,7 +60,8 @@ let startDelayMs = 2000;
 let hasConfirmedName = false;
 let namesByAgent: Record<number, string> = {};
 
-const DEFAULT_START_DELAY_SECONDS = 2;
+const DEFAULT_START_DELAY_SECONDS = 2.9;
+const STARTER_DELAY_MS = 3000; // Starter always acts at exactly 3 seconds
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
 
 delayInput.disabled = true;
@@ -87,7 +93,7 @@ function connect() {
   updateStatus('connecting', 'Connecting...');
 
   try {
-    ws = new WebSocket(HARDCODED_SERVER_URL);
+    ws = new WebSocket(SERVER_URL);
 
     ws.onopen = () => {
       console.log('[WS] Connected');
@@ -132,6 +138,8 @@ function connect() {
         } else if (message.type === 'phase') {
           const phaseMsg = message as PhaseMessage;
           ipcRenderer.send('update-overlay', phaseMsg);
+        } else if (message.type === 'reset') {
+          ipcRenderer.send('update-overlay', { type: 'reset' });
         } else if (message.type === 'error') {
           updateStatus('disconnected', String(message.message ?? 'Server error'));
         }
@@ -187,9 +195,11 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
   if (!agentId) {
     return;
   }
-  const delay = Math.max(0, timestamp + startDelayMs - Date.now());
-  setTimeout(() => {
-    if (agentId === starterAgentId) {
+  
+  if (agentId === starterAgentId) {
+    // Starter always acts at exactly 3 seconds after timestamp
+    const delay = Math.max(0, timestamp + STARTER_DELAY_MS - Date.now());
+    setTimeout(() => {
       ipcRenderer.send('start-space');
       // Send phase change after key press
       setTimeout(() => {
@@ -197,10 +207,14 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
           ws.send(JSON.stringify({ type: 'set_phase', phase: 'Railyard' }));
         }
       }, 200);
-    } else {
+    }, delay);
+  } else {
+    // Others use the customizable delay (default 2.9 seconds)
+    const delay = Math.max(0, timestamp + startDelayMs - Date.now());
+    setTimeout(() => {
       ipcRenderer.send('start-ctrl-tap');
-    }
-  }, delay);
+    }, delay);
+  }
 }
 
 function setSelectedName(name: string) {

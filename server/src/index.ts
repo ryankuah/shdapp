@@ -174,12 +174,13 @@ function handleMessage(ws: WebSocket, data: string) {
           }));
           break;
         }
-        const countdownDuration = 5000; // 5 seconds
-        const endTime = Date.now() + countdownDuration;
+        const countdownDuration = 3000; // 3 seconds
+        const timestamp = Date.now(); // When start was triggered
+        const endTime = timestamp + countdownDuration;
         broadcast({ type: 'countdown', endTime, duration: countdownDuration });
         const startMessage: StartBroadcastMessage = {
           type: 'start',
-          timestamp: endTime,
+          timestamp, // Send the trigger time, not the end time
           starterAgentId: agentId
         };
         broadcast(startMessage);
@@ -190,6 +191,7 @@ function handleMessage(ws: WebSocket, data: string) {
         for (const [id] of agentReadyState) {
           agentReadyState.set(id, false);
         }
+        broadcast({ type: 'reset' });
         broadcastReadyState();
         break;
       }

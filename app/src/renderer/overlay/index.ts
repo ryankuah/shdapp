@@ -24,7 +24,11 @@ interface PhaseMessage {
   phase: string;
 }
 
-type OverlayMessage = ReadyStateMessage | AgentAssignedMessage | CountdownMessage | PhaseMessage;
+interface ResetMessage {
+  type: 'reset';
+}
+
+type OverlayMessage = ReadyStateMessage | AgentAssignedMessage | CountdownMessage | PhaseMessage | ResetMessage;
 
 type OverlayState = 'agents' | 'countdown' | 'phase';
 
@@ -189,6 +193,12 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
   } else if (data.type === 'phase') {
     phaseText.textContent = data.phase;
     setOverlayState('phase');
+  } else if (data.type === 'reset') {
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+    setOverlayState('agents');
   }
 });
 
