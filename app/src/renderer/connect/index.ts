@@ -176,7 +176,7 @@ function sendReady() {
 
 function sendStartRequest() {
   if (ws && ws.readyState === WebSocket.OPEN) {
-    const message = { type: 'start_request' };
+    const message = { type: 'start_request', timestamp: Date.now() };
     ws.send(JSON.stringify(message));
     console.log('[WS] Sent:', message);
   } else {

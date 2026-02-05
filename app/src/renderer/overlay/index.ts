@@ -15,7 +15,7 @@ interface AgentAssignedMessage {
 
 interface CountdownMessage {
   type: 'countdown';
-  endTime: number;
+  timestamp: number;
   duration: number;
 }
 
@@ -59,9 +59,12 @@ function setOverlayState(state: OverlayState) {
   phaseDisplay.classList.toggle('hidden', state !== 'phase');
 }
 
-function startCountdown(endTime: number) {
+function startCountdown(timestamp: number, duration: number) {
   if (countdownInterval) clearInterval(countdownInterval);
   setOverlayState('countdown');
+  
+  // Calculate endTime from the starter's timestamp
+  const endTime = timestamp + duration;
 
   function update() {
     const remaining = Math.max(0, endTime - Date.now());
@@ -189,7 +192,7 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
       // Stay in agents state, don't change
     }
   } else if (data.type === 'countdown') {
-    startCountdown(data.endTime);
+    startCountdown(data.timestamp, data.duration);
   } else if (data.type === 'phase') {
     phaseText.textContent = data.phase;
     setOverlayState('phase');

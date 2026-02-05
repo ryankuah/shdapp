@@ -92,11 +92,22 @@ function registerGlobalHotkey() {
     }
   });
 
+  // Test hotkey for double control tap (roll) - 1 second delay to switch focus
+  const registeredTestRoll = globalShortcut.register('CommandOrControl+Shift+K', () => {
+    console.log('Hotkey pressed: Test Roll (double ctrl tap) - executing in 1 second');
+    setTimeout(() => {
+      sendControlKeyTapTwice();
+    }, 1000);
+  });
+
   if (!registered) {
     console.error('Failed to register hotkey');
   }
   if (!registeredStart) {
     console.error('Failed to register start hotkey');
+  }
+  if (!registeredTestRoll) {
+    console.error('Failed to register test roll hotkey');
   }
 }
 

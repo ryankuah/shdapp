@@ -174,13 +174,14 @@ function handleMessage(ws: WebSocket, data: string) {
           }));
           break;
         }
+        // Use the timestamp from the client who triggered start
+        const startMsg = message as { type: string; timestamp: number };
+        const timestamp = startMsg.timestamp;
         const countdownDuration = 3000; // 3 seconds
-        const timestamp = Date.now(); // When start was triggered
-        const endTime = timestamp + countdownDuration;
-        broadcast({ type: 'countdown', endTime, duration: countdownDuration });
+        broadcast({ type: 'countdown', timestamp, duration: countdownDuration });
         const startMessage: StartBroadcastMessage = {
           type: 'start',
-          timestamp, // Send the trigger time, not the end time
+          timestamp,
           starterAgentId: agentId
         };
         broadcast(startMessage);
