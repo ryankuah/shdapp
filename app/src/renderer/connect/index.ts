@@ -59,6 +59,8 @@ let selectedName: string | null = null;
 let startDelayMs = 2000;
 let hasConfirmedName = false;
 let namesByAgent: Record<number, string> = {};
+let intentionalDisconnect = false;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DEFAULT_START_DELAY_SECONDS = 2.9;
 const STARTER_DELAY_MS = 3000; // Starter always acts at exactly 3 seconds
@@ -90,6 +92,13 @@ function updateStatus(status: 'connected' | 'disconnected' | 'connecting', messa
 }
 
 function connect() {
+  // Clear any pending reconnect timer to prevent stacking
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
+  intentionalDisconnect = false;
   updateStatus('connecting', 'Connecting...');
 
   try {
@@ -104,9 +113,20 @@ function connect() {
 
     ws.onclose = () => {
       console.log('[WS] Disconnected');
-      updateStatus('disconnected', 'Disconnected - Reconnecting...');
       ws = null;
-      setTimeout(connect, 3000);
+
+      // Reset overlay to clear stale data
+      ipcRenderer.send('update-overlay', { type: 'reset' });
+
+      if (intentionalDisconnect) {
+        // User clicked disconnect - don't reconnect, hide overlay
+        ipcRenderer.send('hide-overlay');
+        updateStatus('disconnected', 'Disconnected');
+      } else {
+        // Unexpected disconnect - auto-reconnect
+        updateStatus('disconnected', 'Disconnected - Reconnecting...');
+        reconnectTimer = setTimeout(connect, 3000);
+      }
     };
 
     ws.onerror = (error) => {
@@ -154,8 +174,16 @@ function connect() {
 }
 
 function disconnect() {
+  intentionalDisconnect = true;
+
+  // Clear any pending reconnect timer
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   if (ws) {
-    ws.close();
+    ws.close(); // onclose handler will reset overlay and hide it
     ws = null;
   }
   agentId = null;

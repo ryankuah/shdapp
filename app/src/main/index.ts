@@ -17,6 +17,8 @@ try {
 
 let connectWindow: BrowserWindow | null = null;
 let overlayWindow: BrowserWindow | null = null;
+let overlayReady = false;
+let pendingOverlayMessages: unknown[] = [];
 
 function createConnectWindow() {
   connectWindow = new BrowserWindow({
@@ -46,7 +48,10 @@ function createConnectWindow() {
 
 function createOverlayWindow() {
   const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
-  
+
+  overlayReady = false;
+  pendingOverlayMessages = [];
+
   overlayWindow = new BrowserWindow({
     width: screenWidth,
     height: screenHeight,
@@ -69,9 +74,20 @@ function createOverlayWindow() {
   overlayWindow.setIgnoreMouseEvents(true);
   
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay/index.html'));
+
+  overlayWindow.webContents.on('did-finish-load', () => {
+    overlayReady = true;
+    // Flush any messages that arrived while the overlay was loading
+    for (const msg of pendingOverlayMessages) {
+      overlayWindow?.webContents.send('overlay-update', msg);
+    }
+    pendingOverlayMessages = [];
+  });
   
   overlayWindow.on('closed', () => {
     overlayWindow = null;
+    overlayReady = false;
+    pendingOverlayMessages = [];
   });
 }
 
@@ -147,7 +163,12 @@ ipcMain.on('hide-overlay', () => {
 
 ipcMain.on('update-overlay', (_event, data) => {
   if (overlayWindow) {
-    overlayWindow.webContents.send('overlay-update', data);
+    if (overlayReady) {
+      overlayWindow.webContents.send('overlay-update', data);
+    } else {
+      // Queue messages until overlay renderer is loaded
+      pendingOverlayMessages.push(data);
+    }
   }
 });
 
