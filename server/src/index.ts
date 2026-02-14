@@ -50,6 +50,11 @@ const clientAgents = new Map<WebSocket, number>();
 const agentReadyState = new Map<number, boolean>();
 const agentNames = new Map<number, string>();
 
+// Phase system state
+let currentPhaseIndex = -1; // -1 = "Ready" phase
+let configuredPhases: string[] = [];
+let phaseRoles: Record<string, Record<number, string>> = {};
+
 // Create Fastify instance
 const fastify = Fastify({
   logger: true
@@ -104,6 +109,31 @@ function broadcastReadyState() {
     type: 'ready_state',
     agents: getReadyStateSnapshot(),
     names: getNameSnapshot()
+  };
+  broadcast(message);
+}
+
+function getCurrentPhaseName(): string {
+  if (currentPhaseIndex < 0 || currentPhaseIndex >= configuredPhases.length) {
+    return 'Ready';
+  }
+  return configuredPhases[currentPhaseIndex];
+}
+
+function broadcastPhaseConfig() {
+  const message = {
+    type: 'phase_config',
+    phases: configuredPhases,
+    currentPhase: getCurrentPhaseName(),
+    currentPhaseIndex
+  };
+  broadcast(message);
+}
+
+function broadcastRolesConfig() {
+  const message = {
+    type: 'roles_config',
+    roles: phaseRoles
   };
   broadcast(message);
 }
@@ -192,14 +222,37 @@ function handleMessage(ws: WebSocket, data: string) {
         for (const [id] of agentReadyState) {
           agentReadyState.set(id, false);
         }
+        currentPhaseIndex = -1;
         broadcast({ type: 'reset' });
         broadcastReadyState();
+        broadcastPhaseConfig();
         break;
       }
 
-      case 'set_phase': {
-        const phaseMsg = message as { type: string; phase: string };
-        broadcast({ type: 'phase', phase: phaseMsg.phase });
+      case 'set_phases': {
+        const phasesMsg = message as { type: string; phases: string[] };
+        const phases = Array.isArray(phasesMsg.phases)
+          ? phasesMsg.phases.filter((p): p is string => typeof p === 'string').slice(0, 32)
+          : [];
+        configuredPhases = phases;
+        broadcastPhaseConfig();
+        break;
+      }
+
+      case 'set_roles': {
+        const rolesMsg = message as { type: string; roles: Record<string, Record<number, string>> };
+        if (rolesMsg.roles && typeof rolesMsg.roles === 'object') {
+          phaseRoles = rolesMsg.roles;
+          broadcastRolesConfig();
+        }
+        break;
+      }
+
+      case 'advance_phase': {
+        if (configuredPhases.length > 0) {
+          currentPhaseIndex = Math.min(currentPhaseIndex + 1, configuredPhases.length - 1);
+        }
+        broadcastPhaseConfig();
         break;
       }
       
@@ -264,6 +317,8 @@ async function registerRoutes() {
 
     ws.send(JSON.stringify(assignedMessage));
     broadcastReadyState();
+    broadcastPhaseConfig();
+    broadcastRolesConfig();
 
     // Handle messages
     ws.on('message', (data: Buffer) => {

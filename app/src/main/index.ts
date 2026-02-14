@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, screen } from 'electron';
 import * as path from 'path';
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 
@@ -23,7 +23,7 @@ let pendingOverlayMessages: unknown[] = [];
 function createConnectWindow() {
   connectWindow = new BrowserWindow({
     width: 400,
-    height: 350,
+    height: 600,
     resizable: true,
     frame: true,
     webPreferences: {
@@ -108,6 +108,13 @@ function registerGlobalHotkey() {
     }
   });
 
+  const registeredAdvancePhase = globalShortcut.register('CommandOrControl+Shift+N', () => {
+    console.log('Hotkey pressed: Advance Phase');
+    if (connectWindow) {
+      connectWindow.webContents.send('hotkey-advance-phase');
+    }
+  });
+
   // Test hotkey for double control tap (roll) - 1 second delay to switch focus
   const registeredTestRoll = globalShortcut.register('CommandOrControl+Shift+K', () => {
     console.log('Hotkey pressed: Test Roll (double ctrl tap) - executing in 1 second');
@@ -121,6 +128,9 @@ function registerGlobalHotkey() {
   }
   if (!registeredStart) {
     console.error('Failed to register start hotkey');
+  }
+  if (!registeredAdvancePhase) {
+    console.error('Failed to register advance phase hotkey');
   }
   if (!registeredTestRoll) {
     console.error('Failed to register test roll hotkey');
@@ -229,6 +239,7 @@ function setupAutoUpdater() {
 
 // App lifecycle
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null); // Remove File, Edit, View, etc. menu bar
   createConnectWindow();
   createOverlayWindow();
   registerGlobalHotkey();
