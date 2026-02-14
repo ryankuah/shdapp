@@ -26,25 +26,8 @@ interface StartMessage extends WSMessage {
 
 interface CountdownMessage extends WSMessage {
   type: 'countdown';
-  endTime: number;
+  timestamp: number;
   duration: number;
-}
-
-interface PhaseMessage extends WSMessage {
-  type: 'phase';
-  phase: string;
-}
-
-interface PhaseConfigMessage extends WSMessage {
-  type: 'phase_config';
-  phases: string[];
-  currentPhase: string;
-  currentPhaseIndex: number;
-}
-
-interface RolesConfigMessage extends WSMessage {
-  type: 'roles_config';
-  roles: Record<string, Record<number, string>>;
 }
 
 const isDev =
@@ -55,49 +38,52 @@ const isDev =
 const SERVER_URL = isDev ? 'ws://localhost:3000/ws' : 'wss://shd-overlay-server.fly.dev/ws';
 
 // DOM elements
-const disconnectBtn = document.getElementById('disconnectBtn') as HTMLButtonElement;
-const nameGrid = document.getElementById('nameGrid') as HTMLDivElement;
+const nameInput = document.getElementById('nameInput') as HTMLInputElement;
+const joinBtn = document.getElementById('joinBtn') as HTMLButtonElement;
 const delayInput = document.getElementById('startDelay') as HTMLInputElement;
 const resetRaidBtn = document.getElementById('resetRaidBtn') as HTMLButtonElement;
 const nameStep = document.getElementById('nameStep') as HTMLDivElement;
 const settingsStep = document.getElementById('settingsStep') as HTMLDivElement;
 const backBtn = document.getElementById('backBtn') as HTMLButtonElement;
 const welcomeText = document.getElementById('welcomeText') as HTMLSpanElement;
-const settingsBtnGroup = document.getElementById('settingsBtnGroup') as HTMLDivElement;
-const editNamesBtn = document.getElementById('editNamesBtn') as HTMLButtonElement;
-const editPhasesBtn = document.getElementById('editPhasesBtn') as HTMLButtonElement;
-const editRolesBtn = document.getElementById('editRolesBtn') as HTMLButtonElement;
-const nameSettingsStep = document.getElementById('nameSettingsStep') as HTMLDivElement;
-const nameSettingsBackBtn = document.getElementById('nameSettingsBackBtn') as HTMLButtonElement;
-const saveNameSettingsBtn = document.getElementById('saveNameSettingsBtn') as HTMLButtonElement;
-const phasesSettingsStep = document.getElementById('phasesSettingsStep') as HTMLDivElement;
-const phasesSettingsBackBtn = document.getElementById('phasesSettingsBackBtn') as HTMLButtonElement;
-const phasesContainer = document.getElementById('phasesContainer') as HTMLDivElement;
-const addPhaseBtn = document.getElementById('addPhaseBtn') as HTMLButtonElement;
-const savePhasesBtn = document.getElementById('savePhasesBtn') as HTMLButtonElement;
-const rolesSettingsStep = document.getElementById('rolesSettingsStep') as HTMLDivElement;
-const rolesSettingsBackBtn = document.getElementById('rolesSettingsBackBtn') as HTMLButtonElement;
-const phaseSelect = document.getElementById('phaseSelect') as HTMLSelectElement;
-const rolesContainer = document.getElementById('rolesContainer') as HTMLDivElement;
-const saveRolesBtn = document.getElementById('saveRolesBtn') as HTMLButtonElement;
-const currentPhaseDisplay = document.getElementById('currentPhaseDisplay') as HTMLDivElement;
-const nextPhaseBtn = document.getElementById('nextPhaseBtn') as HTMLButtonElement;
-const NAME_INPUT_IDS = ['nameInput0', 'nameInput1', 'nameInput2', 'nameInput3', 'nameInput4', 'nameInput5', 'nameInput6', 'nameInput7'] as const;
-let nameButtons: HTMLButtonElement[] = [];
+const fabContainer = document.getElementById('fabContainer') as HTMLDivElement;
+const fabBtn = document.getElementById('fabBtn') as HTMLButtonElement;
+const fabMenu = document.getElementById('fabMenu') as HTMLDivElement;
+const editKeybindsBtn = document.getElementById('editKeybindsBtn') as HTMLButtonElement;
+const keybindsSettingsStep = document.getElementById('keybindsSettingsStep') as HTMLDivElement;
+const keybindsSettingsBackBtn = document.getElementById('keybindsSettingsBackBtn') as HTMLButtonElement;
+const saveKeybindsBtn = document.getElementById('saveKeybindsBtn') as HTMLButtonElement;
+const keybindReadyBtn = document.getElementById('keybindReady') as HTMLButtonElement;
+const keybindStartBtn = document.getElementById('keybindStart') as HTMLButtonElement;
+const keybindTestRollBtn = document.getElementById('keybindTestRoll') as HTMLButtonElement;
+const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement;
+const readySection = document.getElementById('readySection') as HTMLDivElement;
+const postRaidSection = document.getElementById('postRaidSection') as HTMLDivElement;
+const travelBtn = document.getElementById('travelBtn') as HTMLButtonElement;
 
-const DEFAULT_AGENT_NAMES = [
-  'Flamingskull',
-  'Chonko',
-  'Thunndarr',
-  'SS-R',
-  'Pear123451',
-  'YellowBirb',
-  'VibronicWand',
-  'Sunraiser',
-];
-const AGENT_NAMES_STORAGE_KEY = 'shd-agent-names';
-const PHASES_STORAGE_KEY = 'shd-phases';
-const ROLES_STORAGE_KEY = 'shd-phase-roles';
+
+const errorBanner = document.getElementById('errorBanner') as HTMLDivElement;
+const errorBannerText = document.getElementById('errorBannerText') as HTMLSpanElement;
+const errorBannerDismiss = document.getElementById('errorBannerDismiss') as HTMLButtonElement;
+
+const connectionStatus = document.getElementById('connectionStatus') as HTMLDivElement;
+const connectionText = document.getElementById('connectionText') as HTMLSpanElement;
+
+const KEYBINDS_STORAGE_KEY = 'shd-keybinds';
+
+interface KeybindsConfig {
+  ready: string;
+  start: string;
+  testRoll: string;
+  rollDelaySeconds: number;
+}
+
+const DEFAULT_KEYBINDS: KeybindsConfig = {
+  ready: 'CommandOrControl+Shift+R',
+  start: 'CommandOrControl+Shift+S',
+  testRoll: 'CommandOrControl+Shift+K',
+  rollDelaySeconds: 2.9,
+};
 
 let ws: WebSocket | null = null;
 let agentId: number | null = null;
@@ -108,369 +94,236 @@ let hasConfirmedName = false;
 let namesByAgent: Record<number, string> = {};
 let intentionalDisconnect = false;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-let configuredPhases: string[] = [];
-let currentPhase = 'Ready';
-let phaseRoles: Record<string, Record<number, string>> = {};
-let phasesEditBuffer: string[] = [];
+let raidState: 'ready' | 'started' = 'ready';
+let countdownEndTimer: ReturnType<typeof setTimeout> | null = null;
+let travelMode = false;
 
 const DEFAULT_START_DELAY_SECONDS = 2.9;
 const STARTER_DELAY_MS = 3000; // Starter always acts at exactly 3 seconds
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
 
-delayInput.disabled = true;
 
-function loadAgentNames(): string[] {
-  try {
-    const stored = localStorage.getItem(AGENT_NAMES_STORAGE_KEY);
-    if (!stored) return [...DEFAULT_AGENT_NAMES];
-    const parsed = JSON.parse(stored) as unknown;
-    if (!Array.isArray(parsed) || parsed.length !== 8) return [...DEFAULT_AGENT_NAMES];
-    return parsed.map((v, i) =>
-      typeof v === 'string' && v.trim() ? v.trim() : DEFAULT_AGENT_NAMES[i] ?? ''
-    );
-  } catch {
-    return [...DEFAULT_AGENT_NAMES];
+function updateConnectionIndicator(status: 'connected' | 'disconnected' | 'connecting', message: string) {
+  if (connectionStatus && connectionText) {
+    connectionStatus.className = `connection-status ${status}`;
+    connectionText.textContent = message;
   }
-}
-
-function saveAgentNames(names: string[]): void {
-  localStorage.setItem(AGENT_NAMES_STORAGE_KEY, JSON.stringify(names));
-}
-
-function loadPhases(): string[] {
-  try {
-    const stored = localStorage.getItem(PHASES_STORAGE_KEY);
-    if (!stored) return [];
-    const parsed = JSON.parse(stored) as unknown;
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((p): p is string => typeof p === 'string').slice(0, 32);
-  } catch {
-    return [];
-  }
-}
-
-function savePhases(phases: string[]): void {
-  localStorage.setItem(PHASES_STORAGE_KEY, JSON.stringify(phases));
-}
-
-function loadRoles(): Record<string, Record<number, string>> {
-  try {
-    const stored = localStorage.getItem(ROLES_STORAGE_KEY);
-    if (!stored) return {};
-    const parsed = JSON.parse(stored) as unknown;
-    if (!parsed || typeof parsed !== 'object') return {};
-    const result: Record<string, Record<number, string>> = {};
-    for (const [phase, roles] of Object.entries(parsed)) {
-      if (typeof phase === 'string' && roles && typeof roles === 'object') {
-        const roleMap: Record<number, string> = {};
-        for (const [k, v] of Object.entries(roles)) {
-          const id = Number(k);
-          if (Number.isInteger(id) && typeof v === 'string') {
-            roleMap[id] = v;
-          }
-        }
-        result[phase] = roleMap;
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function saveRoles(roles: Record<string, Record<number, string>>): void {
-  localStorage.setItem(ROLES_STORAGE_KEY, JSON.stringify(roles));
-}
-
-function renderNameGrid(): void {
-  const names = loadAgentNames();
-  nameGrid.innerHTML = '';
-  for (const name of names) {
-    const btn = document.createElement('button');
-    btn.type = 'button';
-    btn.className = 'name-option';
-    btn.dataset.name = name;
-    btn.textContent = name;
-    nameGrid.appendChild(btn);
-  }
-  nameButtons = Array.from(nameGrid.querySelectorAll('button')) as HTMLButtonElement[];
-  if (selectedName) {
-    const hasMatch = nameButtons.some((b) => b.dataset.name === selectedName);
-    if (hasMatch) {
-      setSelectedName(selectedName);
-    } else {
-      selectedName = null;
-    }
-  }
-  updateNameButtons();
 }
 
 function updateStatus(status: 'connected' | 'disconnected' | 'connecting', _message: string) {
+  // Update the connection status pill
+  const statusLabels: Record<string, string> = {
+    connected: 'Connected',
+    disconnected: 'Disconnected',
+    connecting: 'Connecting...',
+  };
+  updateConnectionIndicator(status, statusLabels[status] ?? _message);
+
   if (status === 'connected') {
     if (hasConfirmedName) {
       nameStep.classList.add('hidden');
       settingsStep.classList.remove('hidden');
-      nameSettingsStep.classList.add('hidden');
-      phasesSettingsStep.classList.add('hidden');
-      rolesSettingsStep.classList.add('hidden');
+      keybindsSettingsStep.classList.add('hidden');
       document.body.classList.add('settings-view');
       updateWelcomeText();
     } else {
       nameStep.classList.remove('hidden');
       settingsStep.classList.add('hidden');
-      nameSettingsStep.classList.add('hidden');
-      phasesSettingsStep.classList.add('hidden');
-      rolesSettingsStep.classList.add('hidden');
+      keybindsSettingsStep.classList.add('hidden');
       document.body.classList.remove('settings-view');
     }
-    settingsBtnGroup.classList.remove('hidden');
+    fabContainer.classList.remove('hidden');
+    closeFabMenu();
   } else {
     nameStep.classList.remove('hidden');
     settingsStep.classList.add('hidden');
-    nameSettingsStep.classList.add('hidden');
-    phasesSettingsStep.classList.add('hidden');
-    rolesSettingsStep.classList.add('hidden');
-    document.body.classList.remove('settings-view', 'name-settings-view', 'phases-settings-view', 'roles-settings-view');
-    settingsBtnGroup.classList.remove('hidden');
+    keybindsSettingsStep.classList.add('hidden');
+    document.body.classList.remove('settings-view', 'keybinds-settings-view');
+    fabContainer.classList.remove('hidden');
+    closeFabMenu();
     hasConfirmedName = false;
     namesByAgent = {};
-    clearSelectedName();
+    selectedName = null;
   }
   updateSettingsState();
-  updateNameButtons();
 }
 
-function getTakenNamesByOthers(): Set<string> {
-  const taken = new Set<string>();
-  Object.entries(namesByAgent).forEach(([id, name]) => {
-    const numericId = Number(id);
-    if (!Number.isNaN(numericId) && agentId !== numericId) {
-      taken.add(name);
+function loadKeybinds(): KeybindsConfig {
+  try {
+    const stored = localStorage.getItem(KEYBINDS_STORAGE_KEY);
+    if (!stored) return { ...DEFAULT_KEYBINDS };
+    const parsed = JSON.parse(stored) as unknown;
+    if (parsed && typeof parsed === 'object' && 'ready' in parsed && 'start' in parsed && 'testRoll' in parsed) {
+      return {
+        ready: String((parsed as KeybindsConfig).ready || DEFAULT_KEYBINDS.ready),
+        start: String((parsed as KeybindsConfig).start || DEFAULT_KEYBINDS.start),
+        testRoll: String((parsed as KeybindsConfig).testRoll || DEFAULT_KEYBINDS.testRoll),
+        rollDelaySeconds: Number((parsed as KeybindsConfig).rollDelaySeconds) || DEFAULT_KEYBINDS.rollDelaySeconds,
+      };
     }
-  });
-  return taken;
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_KEYBINDS };
 }
 
-function openNameSettings(): void {
-  const names = loadAgentNames();
-  const takenByOthers = getTakenNamesByOthers();
-  NAME_INPUT_IDS.forEach((id, i) => {
-    const input = document.getElementById(id) as HTMLInputElement;
-    if (input) {
-      input.value = names[i] ?? '';
-      input.disabled = takenByOthers.has(names[i] ?? '');
+function saveKeybinds(config: KeybindsConfig): void {
+  localStorage.setItem(KEYBINDS_STORAGE_KEY, JSON.stringify(config));
+  ipcRenderer.send('keybinds-config', config);
+}
+
+function keyEventToAccelerator(e: KeyboardEvent): string {
+  const parts: string[] = [];
+  if (e.ctrlKey || e.metaKey) {
+    parts.push('CommandOrControl');
+  }
+  if (e.altKey) parts.push('Alt');
+  if (e.shiftKey) parts.push('Shift');
+  const key = e.key.toUpperCase();
+  if (['CONTROL', 'META', 'ALT', 'SHIFT'].includes(key)) {
+    return parts.join('+') || key;
+  }
+  const keyMap: Record<string, string> = {
+    ' ': 'Space',
+    'ARROWUP': 'Up',
+    'ARROWDOWN': 'Down',
+    'ARROWLEFT': 'Left',
+    'ARROWRIGHT': 'Right',
+  };
+  parts.push(keyMap[key] || key);
+  return parts.join('+');
+}
+
+function formatAcceleratorForDisplay(acc: string): string {
+  return acc.replace('CommandOrControl', 'Ctrl');
+}
+
+function openKeybindsSettings(): void {
+  const config = loadKeybinds();
+  delayInput.value = String(config.rollDelaySeconds);
+  keybindReadyBtn.textContent = formatAcceleratorForDisplay(config.ready);
+  keybindStartBtn.textContent = formatAcceleratorForDisplay(config.start);
+  keybindTestRollBtn.textContent = formatAcceleratorForDisplay(config.testRoll);
+  keybindReadyBtn.dataset.accelerator = config.ready;
+  keybindStartBtn.dataset.accelerator = config.start;
+  keybindTestRollBtn.dataset.accelerator = config.testRoll;
+
+  nameStep.classList.add('hidden');
+  settingsStep.classList.add('hidden');
+  keybindsSettingsStep.classList.remove('hidden');
+  document.body.classList.remove('settings-view');
+  document.body.classList.add('keybinds-settings-view');
+  fabContainer.classList.add('hidden');
+  closeFabMenu();
+}
+
+function closeKeybindsSettings(): void {
+  keybindsSettingsStep.classList.add('hidden');
+  fabContainer.classList.remove('hidden');
+  document.body.classList.remove('keybinds-settings-view');
+  if (hasConfirmedName) {
+    settingsStep.classList.remove('hidden');
+    document.body.classList.add('settings-view');
+  } else {
+    nameStep.classList.remove('hidden');
+  }
+}
+
+function setupKeybindCapture(btn: HTMLButtonElement, key: keyof Pick<KeybindsConfig, 'ready' | 'start' | 'testRoll'>): void {
+  btn.addEventListener('click', () => {
+    // If already recording, ignore repeat clicks
+    if (btn.classList.contains('recording')) return;
+
+    const originalText = btn.textContent ?? '';
+    const originalAccelerator = btn.dataset.accelerator ?? '';
+    btn.classList.add('recording');
+    btn.textContent = 'Press keys...';
+
+    function cleanup() {
+      window.removeEventListener('keydown', keyHandler, true);
+      document.removeEventListener('mousedown', cancelHandler, true);
     }
-  });
-  nameStep.classList.add('hidden');
-  settingsStep.classList.add('hidden');
-  phasesSettingsStep.classList.add('hidden');
-  rolesSettingsStep.classList.add('hidden');
-  nameSettingsStep.classList.remove('hidden');
-  document.body.classList.remove('settings-view');
-  document.body.classList.add('name-settings-view');
-  settingsBtnGroup.classList.add('hidden');
-}
 
-function closeNameSettings(): void {
-  nameSettingsStep.classList.add('hidden');
-  settingsBtnGroup.classList.remove('hidden');
-  document.body.classList.remove('name-settings-view');
-  if (hasConfirmedName) {
-    settingsStep.classList.remove('hidden');
-    document.body.classList.add('settings-view');
-  } else {
-    nameStep.classList.remove('hidden');
-  }
-}
-
-function updateCurrentPhaseDisplay(): void {
-  if (currentPhaseDisplay) {
-    currentPhaseDisplay.textContent = `Phase: ${currentPhase}`;
-  }
-}
-
-function openPhasesSettings(): void {
-  phasesEditBuffer = configuredPhases.length > 0 ? [...configuredPhases] : loadPhases();
-  renderPhasesInputs();
-  nameStep.classList.add('hidden');
-  settingsStep.classList.add('hidden');
-  nameSettingsStep.classList.add('hidden');
-  rolesSettingsStep.classList.add('hidden');
-  phasesSettingsStep.classList.remove('hidden');
-  document.body.classList.remove('settings-view');
-  document.body.classList.add('phases-settings-view');
-  settingsBtnGroup.classList.add('hidden');
-}
-
-function renderPhasesInputs(): void {
-  phasesContainer.innerHTML = '';
-  phasesEditBuffer.forEach((phase, i) => {
-    const row = document.createElement('div');
-    row.className = 'phase-input-row';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = phase;
-    input.placeholder = `Phase ${i + 1}`;
-    const removeBtn = document.createElement('button');
-    removeBtn.type = 'button';
-    removeBtn.textContent = 'Remove';
-    removeBtn.addEventListener('click', () => {
-      phasesEditBuffer.splice(i, 1);
-      renderPhasesInputs();
-    });
-    row.append(input, removeBtn);
-    phasesContainer.appendChild(row);
-  });
-}
-
-function closePhasesSettings(): void {
-  phasesSettingsStep.classList.add('hidden');
-  settingsBtnGroup.classList.remove('hidden');
-  document.body.classList.remove('phases-settings-view');
-  if (hasConfirmedName) {
-    settingsStep.classList.remove('hidden');
-    document.body.classList.add('settings-view');
-  } else {
-    nameStep.classList.remove('hidden');
-  }
-}
-
-function savePhasesSettings(): void {
-  const rows = phasesContainer.querySelectorAll('.phase-input-row');
-  const newPhases: string[] = [];
-  rows.forEach((row) => {
-    const input = row.querySelector('input') as HTMLInputElement | null;
-    const value = input?.value?.trim() ?? '';
-    if (value) newPhases.push(value);
-  });
-  configuredPhases = newPhases;
-  phasesEditBuffer = newPhases;
-  savePhases(newPhases);
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'set_phases', phases: newPhases }));
-  }
-  closePhasesSettings();
-}
-
-function openRolesSettings(): void {
-  const phases = configuredPhases.length > 0 ? configuredPhases : loadPhases();
-  if (Object.keys(phaseRoles).length === 0) {
-    phaseRoles = loadRoles();
-  }
-  phaseSelect.innerHTML = '';
-  phases.forEach((p) => {
-    const opt = document.createElement('option');
-    opt.value = p;
-    opt.textContent = p;
-    phaseSelect.appendChild(opt);
-  });
-  if (phases.length > 0 && !phaseSelect.value) {
-    phaseSelect.selectedIndex = 0;
-  }
-  phaseSelect.onchange = renderRolesForSelectedPhase;
-  renderRolesForSelectedPhase();
-  nameStep.classList.add('hidden');
-  settingsStep.classList.add('hidden');
-  nameSettingsStep.classList.add('hidden');
-  phasesSettingsStep.classList.add('hidden');
-  rolesSettingsStep.classList.remove('hidden');
-  document.body.classList.remove('settings-view');
-  document.body.classList.add('roles-settings-view');
-  settingsBtnGroup.classList.add('hidden');
-}
-
-function renderRolesForSelectedPhase(): void {
-  const phase = phaseSelect.value;
-  rolesContainer.innerHTML = '';
-  if (!phase) return;
-  const roles = phaseRoles[phase] ?? {};
-  const names = loadAgentNames();
-  for (let i = 0; i < 8; i += 1) {
-    const agentId = i + 1;
-    const row = document.createElement('div');
-    const label = document.createElement('label');
-    label.textContent = `${names[i] || `Slot ${agentId}`} (Agent ${agentId})`;
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.dataset.agentId = String(agentId);
-    input.value = roles[agentId] ?? '';
-    input.placeholder = 'Role';
-    row.append(label, input);
-    rolesContainer.appendChild(row);
-  }
-}
-
-function closeRolesSettings(): void {
-  phaseSelect.onchange = null;
-  rolesSettingsStep.classList.add('hidden');
-  settingsBtnGroup.classList.remove('hidden');
-  document.body.classList.remove('roles-settings-view');
-  if (hasConfirmedName) {
-    settingsStep.classList.remove('hidden');
-    document.body.classList.add('settings-view');
-  } else {
-    nameStep.classList.remove('hidden');
-  }
-}
-
-function saveRolesSettings(): void {
-  const phase = phaseSelect.value;
-  if (!phase) {
-    closeRolesSettings();
-    return;
-  }
-  const inputs = rolesContainer.querySelectorAll('input[data-agent-id]');
-  const roles: Record<number, string> = phaseRoles[phase] ? { ...phaseRoles[phase] } : {};
-  inputs.forEach((input) => {
-    const agentId = Number((input as HTMLInputElement).dataset.agentId);
-    if (Number.isInteger(agentId)) {
-      const value = (input as HTMLInputElement).value?.trim() ?? '';
-      if (value) {
-        roles[agentId] = value;
-      } else {
-        delete roles[agentId];
+    const cancelHandler = (e: MouseEvent) => {
+      // Click landed outside the button — cancel recording
+      if (e.target !== btn) {
+        btn.classList.remove('recording');
+        btn.textContent = originalText;
+        btn.dataset.accelerator = originalAccelerator;
+        cleanup();
       }
-    }
+    };
+
+    const keyHandler = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const upper = e.key.toUpperCase();
+      // Ignore bare modifier keys — wait for the actual key
+      if (['CONTROL', 'META', 'ALT', 'SHIFT'].includes(upper)) {
+        return;
+      }
+      const acc = keyEventToAccelerator(e);
+      btn.dataset.accelerator = acc;
+      btn.textContent = formatAcceleratorForDisplay(acc);
+      btn.classList.remove('recording');
+      cleanup();
+    };
+
+    window.addEventListener('keydown', keyHandler, { capture: true });
+    document.addEventListener('mousedown', cancelHandler, { capture: true });
   });
-  phaseRoles[phase] = roles;
-  saveRoles(phaseRoles);
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'set_roles', roles: phaseRoles }));
-  }
-  closeRolesSettings();
 }
 
-function saveNameSettings(): void {
-  const names = loadAgentNames();
-  const newNames: string[] = [];
-  NAME_INPUT_IDS.forEach((id, i) => {
-    const input = document.getElementById(id) as HTMLInputElement;
-    const value = input?.value?.trim() ?? '';
-    newNames.push((value || DEFAULT_AGENT_NAMES[i]) ?? '');
-  });
-  saveAgentNames(newNames);
+function saveKeybindsSettings(): void {
+  const rollDelaySeconds = getDelaySeconds();
+  const config: KeybindsConfig = {
+    ready: keybindReadyBtn.dataset.accelerator || DEFAULT_KEYBINDS.ready,
+    start: keybindStartBtn.dataset.accelerator || DEFAULT_KEYBINDS.start,
+    testRoll: keybindTestRollBtn.dataset.accelerator || DEFAULT_KEYBINDS.testRoll,
+    rollDelaySeconds,
+  };
+  saveKeybinds(config);
+  setDelaySeconds(rollDelaySeconds);
+  startDelayMs = rollDelaySeconds * 1000;
+  localStorage.setItem(START_DELAY_STORAGE_KEY, String(rollDelaySeconds));
+  closeKeybindsSettings();
+}
 
-  const selectedSlotIndex = selectedName ? names.findIndex((n) => n === selectedName) : -1;
-  const wasUserSlotRenamed =
-    selectedSlotIndex >= 0 && newNames[selectedSlotIndex] !== selectedName;
-
-  if (wasUserSlotRenamed && newNames[selectedSlotIndex]) {
-    const newName = newNames[selectedSlotIndex];
-    if (ws && ws.readyState === WebSocket.OPEN && agentId !== null) {
-      ws.send(JSON.stringify({ type: 'set_name', name: newName }));
-      localStorage.setItem('shd-display-name', newName);
-      selectedName = newName;
-      namesByAgent[agentId] = newName;
-      updateWelcomeText();
-      ipcRenderer.send('update-overlay', { type: 'ready_state', agents: {}, names: { ...namesByAgent } });
+function setRaidState(state: 'ready' | 'started', options?: { skipOverlay?: boolean }): void {
+  raidState = state;
+  if (state === 'ready') {
+    readySection.classList.remove('hidden');
+    postRaidSection.classList.add('hidden');
+    if (!options?.skipOverlay) {
+      ipcRenderer.send('show-overlay');
     }
+  } else {
+    readySection.classList.add('hidden');
+    postRaidSection.classList.remove('hidden');
+    ipcRenderer.send('hide-overlay');
   }
+}
 
-  renderNameGrid();
-  if (selectedName) {
-    setSelectedName(selectedName);
+function updateReadyButton(): void {
+  if (readyBtn) {
+    readyBtn.textContent = isReady ? 'Ready ✓' : 'Ready';
+    readyBtn.classList.toggle('ready', isReady);
   }
-  closeNameSettings();
+}
+
+function closeFabMenu(): void {
+  fabMenu.classList.add('hidden');
+  fabBtn.classList.remove('open');
+}
+
+function toggleFabMenu(): void {
+  const isOpen = !fabMenu.classList.contains('hidden');
+  if (isOpen) {
+    closeFabMenu();
+  } else {
+    fabMenu.classList.remove('hidden');
+    fabBtn.classList.add('open');
+  }
 }
 
 function connect() {
@@ -488,6 +341,7 @@ function connect() {
 
     ws.onopen = () => {
       console.log('[WS] Connected');
+      setRaidState('ready');
       updateStatus('connected', 'Connected');
       // Show overlay when connected
       ipcRenderer.send('show-overlay');
@@ -496,6 +350,14 @@ function connect() {
     ws.onclose = () => {
       console.log('[WS] Disconnected');
       ws = null;
+      travelMode = false;
+      travelBtn.textContent = 'Travel';
+      travelBtn.classList.remove('execute');
+      if (countdownEndTimer) {
+        clearTimeout(countdownEndTimer);
+        countdownEndTimer = null;
+      }
+      setRaidState('ready', { skipOverlay: true });
 
       // Reset overlay to clear stale data
       ipcRenderer.send('update-overlay', { type: 'reset' });
@@ -526,31 +388,43 @@ function connect() {
           agentId = assigned.agentId;
           isReady = assigned.agents[assigned.agentId] ?? false;
           updateNames(assigned.names);
+          updateReadyButton();
           ipcRenderer.send('update-overlay', assigned);
         } else if (message.type === 'ready_state') {
           const readyState = message as ReadyStateMessage;
+          if (agentId !== null) {
+            isReady = readyState.agents[agentId] ?? false;
+            updateReadyButton();
+          }
           updateNames(readyState.names);
           ipcRenderer.send('update-overlay', readyState);
         } else if (message.type === 'countdown') {
           const countdownMsg = message as CountdownMessage;
           ipcRenderer.send('update-overlay', countdownMsg);
+          if (countdownEndTimer) clearTimeout(countdownEndTimer);
+          countdownEndTimer = setTimeout(() => {
+            countdownEndTimer = null;
+            setRaidState('started');
+          }, countdownMsg.duration);
         } else if (message.type === 'start') {
           const startMessage = message as StartMessage;
           scheduleStartActions(startMessage.timestamp, startMessage.starterAgentId);
-        } else if (message.type === 'phase') {
-          const phaseMsg = message as PhaseMessage;
-          ipcRenderer.send('update-overlay', phaseMsg);
-        } else if (message.type === 'phase_config') {
-          const phaseConfig = message as PhaseConfigMessage;
-          configuredPhases = phaseConfig.phases ?? [];
-          currentPhase = phaseConfig.currentPhase ?? 'Ready';
-          updateCurrentPhaseDisplay();
-          ipcRenderer.send('update-overlay', phaseConfig);
-        } else if (message.type === 'roles_config') {
-          const rolesConfig = message as RolesConfigMessage;
-          phaseRoles = rolesConfig.roles ?? {};
-          ipcRenderer.send('update-overlay', rolesConfig);
+        } else if (message.type === 'travel_mode') {
+          const travelMsg = message as { type: string; active: boolean };
+          setTravelMode(travelMsg.active);
+        } else if (message.type === 'execute_travel') {
+          if (isReady) {
+            ipcRenderer.send('start-space');
+          }
         } else if (message.type === 'reset') {
+          if (countdownEndTimer) {
+            clearTimeout(countdownEndTimer);
+            countdownEndTimer = null;
+          }
+          travelMode = false;
+          travelBtn.textContent = 'Travel';
+          travelBtn.classList.remove('execute');
+          setRaidState('ready');
           ipcRenderer.send('update-overlay', { type: 'reset' });
         } else if (message.type === 'error') {
           updateStatus('disconnected', String(message.message ?? 'Server error'));
@@ -588,6 +462,7 @@ function sendReady() {
     isReady = !isReady;
     const message = { type: 'ready', value: isReady };
     ws.send(JSON.stringify(message));
+    updateReadyButton();
     console.log('[WS] Sent:', message);
   } else {
     console.warn('Not connected to server');
@@ -611,6 +486,43 @@ function sendResetRaid() {
   }
 }
 
+function sendTravelRequest() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'travel_request' }));
+    console.log('[WS] Sent travel_request');
+  }
+}
+
+function sendExecuteTravel() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'execute_travel' }));
+    console.log('[WS] Sent execute_travel');
+  }
+}
+
+function setTravelMode(active: boolean) {
+  travelMode = active;
+  if (active) {
+    travelBtn.textContent = 'Execute Travel';
+    travelBtn.classList.add('execute');
+    readySection.classList.remove('hidden');
+    isReady = false;
+    updateReadyButton();
+    ipcRenderer.send('show-overlay');
+    ipcRenderer.send('update-overlay', { type: 'travel_mode', active: true });
+  } else {
+    travelBtn.textContent = 'Travel';
+    travelBtn.classList.remove('execute');
+    if (raidState === 'started') {
+      readySection.classList.add('hidden');
+    }
+    isReady = false;
+    updateReadyButton();
+    ipcRenderer.send('update-overlay', { type: 'travel_mode', active: false });
+    ipcRenderer.send('hide-overlay');
+  }
+}
+
 function scheduleStartActions(timestamp: number, starterAgentId: number) {
   if (!agentId) {
     return;
@@ -631,31 +543,16 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
   }
 }
 
-function setSelectedName(name: string) {
-  nameButtons.forEach((button) => {
-    button.classList.toggle('selected', button.dataset.name === name);
-  });
-  selectedName = name;
-}
-
-function clearSelectedName() {
-  nameButtons.forEach((button) => {
-    button.classList.remove('selected');
-  });
-  selectedName = null;
-}
-
 function saveName(name: string) {
   const cleanName = name.trim();
   if (!cleanName) {
-    updateStatus('connected', 'Please select your name');
     return;
   }
   if (ws && ws.readyState === WebSocket.OPEN) {
     const message = { type: 'set_name', name: cleanName };
     ws.send(JSON.stringify(message));
     localStorage.setItem('shd-display-name', cleanName);
-    setSelectedName(cleanName);
+    selectedName = cleanName;
     updateStatus('connected', 'Connected');
   } else {
     updateStatus('disconnected', 'Not connected');
@@ -681,8 +578,7 @@ function updateWelcomeText() {
 }
 
 function updateSettingsState() {
-  const isConnected = Boolean(ws && ws.readyState === WebSocket.OPEN);
-  delayInput.disabled = !isConnected || !hasConfirmedName;
+  // Reserved for future use
 }
 
 function updateNames(names?: Record<number, string>) {
@@ -690,28 +586,26 @@ function updateNames(names?: Record<number, string>) {
     return;
   }
   namesByAgent = names;
-  updateNameButtons();
 }
 
-function updateNameButtons() {
-  const takenNames = new Set<string>();
-  Object.entries(namesByAgent).forEach(([id, name]) => {
-    const numericId = Number(id);
-    if (!Number.isNaN(numericId) && agentId !== numericId) {
-      takenNames.add(name);
-    }
-  });
-
-  nameButtons.forEach((button) => {
-    const name = button.dataset.name;
-    const isTaken = Boolean(name && takenNames.has(name));
-    button.disabled = isTaken;
-  });
-
-  if (selectedName && takenNames.has(selectedName)) {
-    clearSelectedName();
-  }
+// Error banner management
+function showError(message: string) {
+  errorBannerText.textContent = message;
+  errorBanner.classList.remove('hidden');
 }
+
+function hideError() {
+  errorBanner.classList.add('hidden');
+  errorBannerText.textContent = '';
+}
+
+errorBannerDismiss.addEventListener('click', hideError);
+
+// Listen for errors from main process
+ipcRenderer.on('app-error', (_event: unknown, message: string) => {
+  console.error('[Main Process Error]', message);
+  showError(message);
+});
 
 // Listen for hotkey from main process
 ipcRenderer.on('hotkey-ready', () => {
@@ -724,31 +618,28 @@ ipcRenderer.on('hotkey-start', () => {
   sendStartRequest();
 });
 
-ipcRenderer.on('hotkey-advance-phase', () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'advance_phase' }));
-  }
-});
-
 // Initialize
-disconnectBtn.addEventListener('click', disconnect);
 resetRaidBtn.addEventListener('click', sendResetRaid);
 delayInput.addEventListener('input', () => {
   const delaySeconds = getDelaySeconds();
   startDelayMs = delaySeconds * 1000;
-  localStorage.setItem(START_DELAY_STORAGE_KEY, String(delaySeconds));
 });
-nameGrid.addEventListener('click', (event) => {
-  const target = event.target as HTMLElement | null;
-  const button = target?.closest('button');
-  const name = button?.dataset?.name;
-  if (name && !button?.disabled) {
-    saveName(name);
-    hasConfirmedName = true;
-    nameStep.classList.add('hidden');
-    settingsStep.classList.remove('hidden');
-    updateWelcomeText();
-    updateSettingsState();
+function joinWithName() {
+  const name = nameInput.value.trim();
+  if (!name) return;
+  saveName(name);
+  hasConfirmedName = true;
+  nameStep.classList.add('hidden');
+  settingsStep.classList.remove('hidden');
+  document.body.classList.add('settings-view');
+  updateWelcomeText();
+  updateSettingsState();
+}
+
+joinBtn.addEventListener('click', joinWithName);
+nameInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') {
+    joinWithName();
   }
 });
 
@@ -760,47 +651,45 @@ backBtn.addEventListener('click', () => {
   updateSettingsState();
 });
 
-editNamesBtn.addEventListener('click', openNameSettings);
-editPhasesBtn.addEventListener('click', openPhasesSettings);
-editRolesBtn.addEventListener('click', openRolesSettings);
-saveNameSettingsBtn.addEventListener('click', saveNameSettings);
-nameSettingsBackBtn.addEventListener('click', closeNameSettings);
-phasesSettingsBackBtn.addEventListener('click', closePhasesSettings);
-addPhaseBtn.addEventListener('click', () => {
-  phasesEditBuffer.push('');
-  renderPhasesInputs();
+fabBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  toggleFabMenu();
 });
-savePhasesBtn.addEventListener('click', savePhasesSettings);
-rolesSettingsBackBtn.addEventListener('click', closeRolesSettings);
-saveRolesBtn.addEventListener('click', saveRolesSettings);
-nextPhaseBtn.addEventListener('click', () => {
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'advance_phase' }));
+editKeybindsBtn.addEventListener('click', openKeybindsSettings);
+readyBtn.addEventListener('click', sendReady);
+travelBtn.addEventListener('click', () => {
+  if (!travelMode) {
+    sendTravelRequest();
+  } else {
+    sendExecuteTravel();
   }
 });
 
-// Load saved delay
-const savedDelay = localStorage.getItem(START_DELAY_STORAGE_KEY);
-if (savedDelay) {
-  const parsed = Number(savedDelay);
-  const delaySeconds = Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_START_DELAY_SECONDS;
-  setDelaySeconds(delaySeconds);
-  startDelayMs = delaySeconds * 1000;
-} else {
-  setDelaySeconds(DEFAULT_START_DELAY_SECONDS);
-  startDelayMs = DEFAULT_START_DELAY_SECONDS * 1000;
-}
+setupKeybindCapture(keybindReadyBtn, 'ready');
+setupKeybindCapture(keybindStartBtn, 'start');
+setupKeybindCapture(keybindTestRollBtn, 'testRoll');
+
+keybindsSettingsBackBtn.addEventListener('click', closeKeybindsSettings);
+saveKeybindsBtn.addEventListener('click', saveKeybindsSettings);
+
+// Close FAB menu when clicking outside
+document.addEventListener('click', (e) => {
+  if (!fabContainer.contains(e.target as Node)) {
+    closeFabMenu();
+  }
+});
+// Load saved keybinds (includes roll delay) and send to main process
+const initialKeybinds = loadKeybinds();
+setDelaySeconds(initialKeybinds.rollDelaySeconds);
+startDelayMs = initialKeybinds.rollDelaySeconds * 1000;
+ipcRenderer.send('keybinds-config', initialKeybinds);
 
 // Auto-connect on load
 document.addEventListener('DOMContentLoaded', () => {
-  renderNameGrid();
-  updateCurrentPhaseDisplay();
+  updateReadyButton();
   const savedName = localStorage.getItem('shd-display-name');
   if (savedName) {
-    const hasOption = nameButtons.some((button) => button.dataset.name === savedName);
-    if (hasOption) {
-      setSelectedName(savedName);
-    }
+    nameInput.value = savedName;
   }
   connect();
 });

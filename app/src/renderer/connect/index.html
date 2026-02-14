@@ -6,76 +6,354 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src *;">
   <title>SHD Overlay - Connect</title>
   <style>
+    /* ── Design Tokens ───────────────────────────────── */
+    :root {
+      --primary: #ff6b35;
+      --primary-hover: #ff8555;
+      --primary-active: #e55a28;
+      --primary-glow: rgba(255, 107, 53, 0.2);
+
+      --success: #3fb950;
+      --success-hover: #56d364;
+      --success-active: #238636;
+      --success-glow: rgba(63, 185, 80, 0.2);
+
+      --danger: #f85149;
+      --danger-hover: #ff6e67;
+      --danger-active: #da3633;
+
+      --blue: #388bfd;
+      --blue-hover: #58a6ff;
+      --blue-active: #1f6feb;
+      --blue-glow: rgba(56, 139, 253, 0.2);
+
+      --bg: #0d1117;
+      --bg-card: #161b22;
+      --bg-elevated: #1c2128;
+      --bg-input: #0d1117;
+      --border: #30363d;
+      --border-hover: #484f58;
+
+      --text: #e6edf3;
+      --text-secondary: #8b949e;
+      --text-muted: #6e7681;
+
+      --radius-lg: 16px;
+      --radius: 12px;
+      --radius-sm: 8px;
+      --radius-xs: 6px;
+
+      --shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.25);
+      --transition: 0.2s ease;
+    }
+
+    /* ── Reset ────────────────────────────────────────── */
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
+
+    /* ── Body / Layout ───────────────────────────────── */
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      color: #eee;
+      background: var(--bg);
+      color: var(--text);
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      padding: 30px;
+      padding: 24px;
       width: 100%;
-      max-width: 350px;
+      max-width: 370px;
       margin: 0 auto;
+      -webkit-font-smoothing: antialiased;
     }
+
+    body.settings-view {
+      padding-top: 64px;
+      justify-content: center;
+    }
+
+    body.keybinds-settings-view {
+      padding-top: 64px;
+      justify-content: center;
+    }
+
+    /* ── Typography ───────────────────────────────────── */
     label {
       display: block;
-      font-size: 0.85rem;
-      color: #aaa;
-      margin-bottom: 6px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 8px;
     }
+
+    .hint {
+      text-transform: none;
+      font-weight: 400;
+      letter-spacing: 0;
+      color: var(--text-muted);
+    }
+
+    /* ── Card ─────────────────────────────────────────── */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+      width: 100%;
+      margin-bottom: 12px;
+    }
+
+    /* ── Inputs ───────────────────────────────────────── */
     input[type="text"],
     input[type="number"],
     select {
       width: 100%;
-      padding: 12px;
-      border: 1px solid #333;
-      background: #0f0f1a;
-      color: #fff;
-      font-size: 0.95rem;
-      margin-bottom: 16px;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--bg-input);
+      color: var(--text);
+      font-size: 0.9rem;
+      font-family: inherit;
+      transition: border-color var(--transition), box-shadow var(--transition);
     }
+
     input[type="text"]:focus,
     input[type="number"]:focus,
     select:focus {
       outline: none;
-      border-color: #ff6b35;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
     }
+
+    input[type="text"]::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* ── Buttons (base) ──────────────────────────────── */
     button {
       width: 100%;
-      padding: 12px;
+      padding: 11px 16px;
       border: none;
-      font-size: 1rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.875rem;
       font-weight: 600;
+      font-family: inherit;
       cursor: pointer;
-      transition: background 0.2s, transform 0.1s;
+      transition: all var(--transition);
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
+
     button:active {
-      transform: scale(0.98);
+      transform: scale(0.97);
     }
-    #resetRaidBtn {
-      background: #ff4444;
+
+    /* ── Button Variants ─────────────────────────────── */
+    #joinBtn {
+      background: var(--primary);
       color: #fff;
-      margin-bottom: 10px;
+      margin-top: 14px;
+      padding: 12px 16px;
+      font-size: 0.9rem;
+      letter-spacing: 0.02em;
+    }
+    #joinBtn:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    #joinBtn:active {
+      background: var(--primary-active);
+    }
+
+    #readyBtn {
+      background: var(--success-active);
+      color: #fff;
+      padding: 14px 16px;
+      font-size: 0.95rem;
+      letter-spacing: 0.02em;
+      border: 1px solid transparent;
+    }
+    #readyBtn:hover {
+      background: var(--success);
+      box-shadow: 0 0 0 3px var(--success-glow);
+    }
+    #readyBtn.ready {
+      background: var(--success);
+      border-color: var(--success-hover);
+      box-shadow: 0 0 12px var(--success-glow), 0 0 0 3px var(--success-glow);
+    }
+    #readyBtn.ready:hover {
+      background: var(--success-hover);
+    }
+
+    #travelBtn {
+      background: var(--blue-active);
+      color: #fff;
+      padding: 14px 16px;
+      font-size: 0.95rem;
+      margin-bottom: 8px;
+      border: 1px solid transparent;
+    }
+    #travelBtn:hover {
+      background: var(--blue);
+      box-shadow: 0 0 0 3px var(--blue-glow);
+    }
+    #travelBtn.execute {
+      background: var(--primary);
+      border-color: var(--primary-hover);
+      animation: executePulse 1.5s ease-in-out infinite;
+    }
+    #travelBtn.execute:hover {
+      background: var(--primary-hover);
+    }
+
+    @keyframes executePulse {
+      0%, 100% { box-shadow: 0 0 0 3px var(--primary-glow); }
+      50% { box-shadow: 0 0 16px var(--primary-glow), 0 0 0 3px var(--primary-glow); }
+    }
+
+    #resetRaidBtn {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      margin-bottom: 8px;
     }
     #resetRaidBtn:hover {
-      background: #ff6666;
+      background: rgba(248, 81, 73, 0.1);
     }
-    #disconnectBtn {
-      background: #333;
-      color: #ccc;
-      display: none;
+    #resetRaidBtn:active {
+      background: rgba(248, 81, 73, 0.2);
     }
-    #disconnectBtn:hover {
-      background: #444;
+
+    /* ── Connection Status ────────────────────────────── */
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      border-radius: 99px;
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      margin-bottom: 20px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      transition: all 0.3s ease;
     }
+
+    .connection-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: all 0.3s ease;
+      flex-shrink: 0;
+    }
+
+    .connection-status.connecting {
+      border-color: rgba(136, 136, 136, 0.3);
+    }
+    .connection-status.connecting .connection-dot {
+      background: #888;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    .connection-status.connected {
+      border-color: rgba(63, 185, 80, 0.3);
+    }
+    .connection-status.connected .connection-dot {
+      background: var(--success);
+      box-shadow: 0 0 8px var(--success-glow);
+    }
+
+    .connection-status.disconnected {
+      border-color: rgba(248, 81, 73, 0.3);
+    }
+    .connection-status.disconnected .connection-dot {
+      background: var(--danger);
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── Brand Header ─────────────────────────────────── */
+    .brand {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+
+    .brand-icon {
+      width: 56px;
+      height: 56px;
+      margin: 0 auto 14px;
+      background: linear-gradient(135deg, var(--primary), var(--primary-active));
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 16px var(--primary-glow);
+    }
+
+    .brand-icon svg {
+      width: 30px;
+      height: 30px;
+      color: #fff;
+    }
+
+    .brand-title {
+      font-size: 1.35rem;
+      font-weight: 800;
+      color: var(--text);
+      letter-spacing: 0.08em;
+      line-height: 1.2;
+    }
+
+    .brand-title span {
+      color: var(--primary);
+    }
+
+    .brand-subtitle {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      margin-top: 4px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Steps ─────────────────────────────────────────── */
+    .step {
+      width: 100%;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    #nameStep .card {
+      margin-bottom: 0;
+    }
+
+    #nameStep label {
+      margin-bottom: 8px;
+    }
+
+    #nameStep input[type="text"] {
+      margin-bottom: 0;
+    }
+
+    /* ── Settings Header ──────────────────────────────── */
     .settings-header {
       position: fixed;
       top: 0;
@@ -84,15 +362,28 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
+      padding: 14px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
       z-index: 10;
     }
+
     .settings-header .header-spacer {
       width: 36px;
       flex-shrink: 0;
     }
+
+    .welcome-text {
+      flex: 1;
+      text-align: center;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text-secondary);
+      letter-spacing: 0.02em;
+    }
+
     .back-btn {
-      width: auto;
+      width: 36px;
       min-width: 36px;
       height: 36px;
       padding: 0;
@@ -100,252 +391,379 @@
       align-items: center;
       justify-content: center;
       background: transparent;
-      color: #ccc;
-      font-size: 1.2rem;
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
     }
     .back-btn:hover {
-      background: rgba(255, 255, 255, 0.08);
+      background: var(--bg-elevated);
+      color: var(--text);
+      border-color: var(--border);
     }
-    .welcome-text {
-      flex: 1;
-      text-align: center;
-      font-size: 0.95rem;
-      color: #aaa;
+
+    .back-btn svg {
+      width: 18px;
+      height: 18px;
     }
-    body.settings-view {
-      padding-top: 52px;
-    }
-    body.name-settings-view,
-    body.phases-settings-view,
-    body.roles-settings-view {
-      padding-top: 30px;
-    }
-    .step {
-      margin-bottom: 16px;
-    }
-    .hidden {
-      display: none;
-    }
-    .name-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
-      margin-bottom: 16px;
-    }
-    .name-option {
-      padding: 10px;
-      border: 1px solid #333;
-      background: #0f0f1a;
-      color: #fff;
-      font-size: 0.9rem;
-      cursor: pointer;
-      transition: border-color 0.2s, background 0.2s, transform 0.1s;
-    }
-    .name-option:hover {
-      border-color: #ff6b35;
-      background: #1a1a2e;
-    }
-    .name-option:active {
-      transform: scale(0.98);
-    }
-    .name-option:disabled {
-      border-color: #333;
-      background: #0b0b12;
-      color: #666;
-      cursor: not-allowed;
-    }
-    .name-option.selected {
-      border-color: #ff6b35;
-      background: rgba(255, 107, 53, 0.2);
-      color: #ff6b35;
-      font-weight: 600;
-    }
-    .current-phase {
-      font-size: 0.9rem;
-      color: #ff6b35;
-      font-weight: 600;
-      margin-bottom: 12px;
-    }
-    #nextPhaseBtn {
-      background: #2a7a4a;
-      color: #fff;
-      margin-bottom: 10px;
-    }
-    #nextPhaseBtn:hover {
-      background: #33995a;
-    }
-    .settings-btn-group {
-      position: fixed;
-      bottom: 16px;
-      left: 50%;
-      transform: translateX(-50%);
+
+    /* ── Actions Card ─────────────────────────────────── */
+    .actions-card {
       display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .actions-card #readySection {
+      margin-bottom: 0;
+    }
+
+    .actions-card #postRaidSection {
+      display: flex;
+      flex-direction: column;
       gap: 8px;
+    }
+
+    .actions-card #postRaidSection.hidden {
+      display: none !important;
+    }
+
+    .management-card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      background: transparent;
+      border: none;
+      padding: 0;
+    }
+
+    /* ── Section Label ────────────────────────────────── */
+    .section-label {
+      margin-top: 8px;
+    }
+
+    /* ── FAB ──────────────────────────────────────────── */
+    .fab-container {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
       z-index: 20;
     }
-    .settings-action-btn {
-      width: auto;
-      padding: 8px 14px;
-      font-size: 0.85rem;
-      background: rgba(255, 107, 53, 0.3);
-      color: #ff6b35;
-      border-radius: 8px;
-      border: 1px solid rgba(255, 107, 53, 0.5);
-    }
-    .settings-action-btn:hover {
-      background: rgba(255, 107, 53, 0.5);
-    }
-    .settings-action-btn.hidden {
+
+    .fab-container.hidden {
       display: none;
     }
-    .name-settings-step .settings-header {
-      position: relative;
-    }
-    .name-settings-step input[type="text"] {
-      margin-bottom: 10px;
-    }
-    .name-settings-step input:disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    #saveNameSettingsBtn {
-      background: #ff6b35;
+
+    .fab-btn {
+      width: 48px;
+      height: 48px;
+      min-width: 48px;
+      padding: 0;
+      border-radius: 50%;
+      background: var(--primary);
       color: #fff;
-      margin-top: 8px;
-    }
-    #saveNameSettingsBtn:hover {
-      background: #ff8555;
-    }
-    .phases-settings-step .settings-header,
-    .roles-settings-step .settings-header {
-      position: relative;
-    }
-    .phases-settings-step input[type="text"],
-    .roles-settings-step input[type="text"] {
-      margin-bottom: 10px;
-    }
-    .phase-input-row {
       display: flex;
-      gap: 8px;
-      margin-bottom: 10px;
       align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 14px var(--primary-glow);
+      transition: all var(--transition);
+      border: none;
     }
-    .phase-input-row input {
-      flex: 1;
-      margin-bottom: 0;
+    .fab-btn:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 6px 20px rgba(255, 107, 53, 0.4);
+      transform: scale(1.05);
     }
-    .phase-input-row button {
-      width: auto;
-      padding: 8px 12px;
-      margin-bottom: 0;
+    .fab-btn:active {
+      transform: scale(0.92);
     }
-    #phasesContainer {
-      margin-bottom: 12px;
+    .fab-btn.open {
+      background: var(--primary-active);
+      transform: rotate(45deg);
     }
-    #addPhaseBtn {
-      background: #2a7a4a;
-      color: #fff;
+    .fab-btn.open:hover {
+      transform: rotate(45deg) scale(1.05);
+    }
+
+    .fab-btn svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .fab-menu {
       margin-bottom: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-items: flex-end;
     }
-    #addPhaseBtn:hover {
-      background: #33995a;
+
+    .fab-menu.hidden {
+      display: none;
     }
-    #savePhasesBtn {
-      background: #ff6b35;
+
+    .fab-menu-item {
+      width: auto;
+      white-space: nowrap;
+      padding: 10px 16px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: var(--bg-card);
+      color: var(--primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: var(--shadow-sm);
+      transition: all var(--transition);
+    }
+    .fab-menu-item:hover {
+      background: var(--bg-elevated);
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    .fab-menu-item:active {
+      transform: scale(0.97);
+    }
+
+    .fab-menu-icon {
+      font-size: 1rem;
+    }
+
+    /* ── Keybinds Settings ────────────────────────────── */
+    .keybinds-settings-step .settings-header {
+      position: fixed;
+    }
+
+    .keybinds-settings-step .card {
+      margin-top: 0;
+    }
+
+    .keybinds-settings-step input[type="number"] {
+      margin-bottom: 18px;
+    }
+
+    .keybind-rows {
+      margin-bottom: 14px;
+    }
+
+    .keybind-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .keybind-label {
+      flex: 0 0 72px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .keybind-input {
+      flex: 1;
+      padding: 9px 14px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xs);
+      color: var(--primary);
+      font-size: 0.82rem;
+      font-family: 'Consolas', 'SF Mono', 'Fira Code', monospace;
+      cursor: pointer;
+      text-align: left;
+      transition: all var(--transition);
+    }
+    .keybind-input:hover {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    .keybind-input.recording {
+      border-color: var(--success);
+      box-shadow: 0 0 0 3px var(--success-glow);
+      color: var(--success);
+      animation: recordPulse 1s ease-in-out infinite;
+    }
+
+    @keyframes recordPulse {
+      50% { box-shadow: 0 0 12px var(--success-glow), 0 0 0 3px var(--success-glow); }
+    }
+
+    #saveKeybindsBtn {
+      background: var(--primary);
       color: #fff;
-      margin-top: 8px;
+      margin-top: 4px;
     }
-    #savePhasesBtn:hover {
-      background: #ff8555;
+    #saveKeybindsBtn:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 0 3px var(--primary-glow);
     }
-    #phaseSelect {
-      margin-bottom: 16px;
+    #saveKeybindsBtn:active {
+      background: var(--primary-active);
     }
-    #saveRolesBtn {
-      background: #ff6b35;
+
+    /* ── Error Banner ─────────────────────────────────── */
+    .error-banner {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: var(--danger-active);
       color: #fff;
-      margin-top: 8px;
+      padding: 10px 40px 10px 14px;
+      font-size: 0.78rem;
+      font-weight: 500;
+      line-height: 1.5;
+      z-index: 100;
+      box-shadow: 0 4px 12px rgba(218, 54, 51, 0.3);
     }
-    #saveRolesBtn:hover {
-      background: #ff8555;
+    .error-banner.hidden {
+      display: none;
+    }
+
+    .error-banner-dismiss {
+      position: absolute;
+      top: 50%;
+      right: 10px;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 1.1rem;
+      cursor: pointer;
+      width: auto;
+      min-width: auto;
+      padding: 4px 8px;
+      border-radius: 4px;
+    }
+    .error-banner-dismiss:hover {
+      color: #fff;
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    /* ── Scrollbar ────────────────────────────────────── */
+    ::-webkit-scrollbar {
+      width: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--border-hover);
     }
   </style>
 </head>
 <body>
+  <div id="errorBanner" class="error-banner hidden">
+    <span id="errorBannerText"></span>
+    <button type="button" class="error-banner-dismiss" id="errorBannerDismiss" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <!-- ── Name Step ───────────────────────────────────── -->
   <div id="nameStep" class="step">
-    <label>Select Name</label>
-    <div id="nameGrid" class="name-grid">
-      <!-- Buttons populated dynamically by renderNameGrid() -->
+    <div class="brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <h1 class="brand-title">SHD <span>OVERLAY</span></h1>
+      <p class="brand-subtitle">Division 2 Speedrun Coordination</p>
+    </div>
+
+    <div id="connectionStatus" class="connection-status connecting">
+      <span class="connection-dot"></span>
+      <span id="connectionText">Connecting</span>
+    </div>
+
+    <div class="card">
+      <label for="nameInput">Agent Name</label>
+      <input type="text" id="nameInput" placeholder="Enter your callsign..." maxlength="32" autocomplete="off">
+      <button type="button" id="joinBtn">Join Session</button>
     </div>
   </div>
 
+  <!-- ── Settings Step ───────────────────────────────── -->
   <div id="settingsStep" class="step hidden">
     <div class="settings-header">
-      <button type="button" id="backBtn" class="back-btn" aria-label="Back">←</button>
+      <button type="button" id="backBtn" class="back-btn" aria-label="Back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
       <span id="welcomeText" class="welcome-text">Welcome Agent</span>
       <div class="header-spacer"></div>
     </div>
-    <div id="currentPhaseDisplay" class="current-phase">Phase: Ready</div>
-    <label for="startDelay">Roll Delay (seconds)</label>
-    <input type="number" id="startDelay" min="0" step="0.1" value="2.9">
 
-    <button id="nextPhaseBtn">Next Phase</button>
-    <button id="resetRaidBtn">Reset Raid</button>
-    <button id="disconnectBtn">Disconnect</button>
+    <div class="card actions-card">
+      <div id="readySection">
+        <button id="readyBtn">Ready</button>
+      </div>
+      <div id="postRaidSection" class="hidden">
+        <button id="travelBtn">Travel</button>
+      </div>
+    </div>
+
+    <div class="management-card">
+      <button id="resetRaidBtn">Reset Raid</button>
+    </div>
   </div>
 
-  <div id="nameSettingsStep" class="step name-settings-step hidden">
+  <!-- ── Keybinds Settings Step ──────────────────────── -->
+  <div id="keybindsSettingsStep" class="step keybinds-settings-step hidden">
     <div class="settings-header">
-      <button type="button" id="nameSettingsBackBtn" class="back-btn" aria-label="Back">←</button>
-      <span class="welcome-text">Edit Agent Names</span>
+      <button type="button" id="keybindsSettingsBackBtn" class="back-btn" aria-label="Back">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 18l-6-6 6-6"/>
+        </svg>
+      </button>
+      <span class="welcome-text">Keybinds &amp; Roll Delay</span>
       <div class="header-spacer"></div>
     </div>
-    <label for="nameInput0">Slot 1</label>
-    <input type="text" id="nameInput0" data-slot="0">
-    <label for="nameInput1">Slot 2</label>
-    <input type="text" id="nameInput1" data-slot="1">
-    <label for="nameInput2">Slot 3</label>
-    <input type="text" id="nameInput2" data-slot="2">
-    <label for="nameInput3">Slot 4</label>
-    <input type="text" id="nameInput3" data-slot="3">
-    <label for="nameInput4">Slot 5</label>
-    <input type="text" id="nameInput4" data-slot="4">
-    <label for="nameInput5">Slot 6</label>
-    <input type="text" id="nameInput5" data-slot="5">
-    <label for="nameInput6">Slot 7</label>
-    <input type="text" id="nameInput6" data-slot="6">
-    <label for="nameInput7">Slot 8</label>
-    <input type="text" id="nameInput7" data-slot="7">
-    <button type="button" id="saveNameSettingsBtn">Save</button>
-  </div>
 
-  <div id="phasesSettingsStep" class="step phases-settings-step hidden">
-    <div class="settings-header">
-      <button type="button" id="phasesSettingsBackBtn" class="back-btn" aria-label="Back">←</button>
-      <span class="welcome-text">Edit Phases</span>
-      <div class="header-spacer"></div>
+    <div class="card">
+      <label for="startDelay">Roll Delay (seconds)</label>
+      <input type="number" id="startDelay" min="0" step="0.1" value="2.9">
+
+      <label class="section-label">Hotkeys <span class="hint">(click to rebind)</span></label>
+      <div class="keybind-rows">
+        <div class="keybind-row">
+          <span class="keybind-label">Ready</span>
+          <button type="button" id="keybindReady" class="keybind-input">Ctrl+Shift+R</button>
+        </div>
+        <div class="keybind-row">
+          <span class="keybind-label">Start</span>
+          <button type="button" id="keybindStart" class="keybind-input">Ctrl+Shift+S</button>
+        </div>
+        <div class="keybind-row">
+          <span class="keybind-label">Test Roll</span>
+          <button type="button" id="keybindTestRoll" class="keybind-input">Ctrl+Shift+K</button>
+        </div>
+      </div>
+      <button type="button" id="saveKeybindsBtn">Save Keybinds</button>
     </div>
-    <div id="phasesContainer"></div>
-    <button type="button" id="addPhaseBtn">Add Phase</button>
-    <button type="button" id="savePhasesBtn">Save</button>
   </div>
 
-  <div id="rolesSettingsStep" class="step roles-settings-step hidden">
-    <div class="settings-header">
-      <button type="button" id="rolesSettingsBackBtn" class="back-btn" aria-label="Back">←</button>
-      <span class="welcome-text">Edit Roles</span>
-      <div class="header-spacer"></div>
+  <!-- ── FAB ─────────────────────────────────────────── -->
+  <div id="fabContainer" class="fab-container">
+    <div id="fabMenu" class="fab-menu hidden">
+      <button type="button" id="editKeybindsBtn" class="fab-menu-item">
+        <span class="fab-menu-icon">⌨</span> Keybinds
+      </button>
     </div>
-    <label for="phaseSelect">Phase</label>
-    <select id="phaseSelect"></select>
-    <div id="rolesContainer"></div>
-    <button type="button" id="saveRolesBtn">Save</button>
-  </div>
-
-  <div id="settingsBtnGroup" class="settings-btn-group">
-    <button type="button" id="editNamesBtn" class="settings-action-btn">Edit Names</button>
-    <button type="button" id="editPhasesBtn" class="settings-action-btn">Edit Phases</button>
-    <button type="button" id="editRolesBtn" class="settings-action-btn">Edit Roles</button>
+    <button type="button" id="fabBtn" class="fab-btn" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>
   </div>
 
   <script>require('./index.js');</script>

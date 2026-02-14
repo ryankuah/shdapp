@@ -1,6 +1,6 @@
 {
   "name": "shd-speedrun-overlay",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Division 2 speedrunning actions overlay",
   "main": "dist/main/index.js",
   "scripts": {
@@ -29,10 +29,8 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@jitsi/robotjs": "^0.6.21",
     "electron-updater": "^6.1.7"
-  },
-  "optionalDependencies": {
-    "@jitsi/robotjs": "^0.6.21"
   },
   "build": {
     "appId": "com.shd.speedrun-overlay",

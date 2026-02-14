@@ -19,43 +19,29 @@ interface CountdownMessage {
   duration: number;
 }
 
-interface PhaseMessage {
-  type: 'phase';
-  phase: string;
-}
-
-interface PhaseConfigMessage {
-  type: 'phase_config';
-  phases: string[];
-  currentPhase: string;
-  currentPhaseIndex: number;
-}
-
-interface RolesConfigMessage {
-  type: 'roles_config';
-  roles: Record<string, Record<number, string>>;
-}
-
 interface ResetMessage {
   type: 'reset';
+}
+
+interface TravelModeMessage {
+  type: 'travel_mode';
+  active: boolean;
 }
 
 type OverlayMessage =
   | ReadyStateMessage
   | AgentAssignedMessage
   | CountdownMessage
-  | PhaseMessage
-  | PhaseConfigMessage
-  | RolesConfigMessage
-  | ResetMessage;
+  | ResetMessage
+  | TravelModeMessage;
 
 type OverlayState = 'agents' | 'countdown';
 
 const MAX_AGENTS = 8;
-const phaseStatus = document.getElementById('phaseStatus') as HTMLDivElement;
+const modeIndicator = document.getElementById('modeIndicator') as HTMLDivElement;
 const agentList = document.getElementById('agentList') as HTMLDivElement;
 const countdown = document.getElementById('countdown') as HTMLDivElement;
-const countdownValue = document.getElementById('countdownValue') as HTMLSpanElement;
+const countdownValue = document.getElementById('countdownValue') as HTMLDivElement;
 
 const agentRows = new Map<number, HTMLDivElement>();
 const agentDots = new Map<number, HTMLSpanElement>();
@@ -65,14 +51,11 @@ const agentNames = new Map<number, HTMLSpanElement>();
 let selfAgentId: number | null = null;
 let agentStates: Record<number, boolean> = {};
 let agentNameState: Record<number, string> = {};
-let currentPhase = 'Ready';
-let phaseRoles: Record<string, Record<number, string>> = {};
 let overlayState: OverlayState = 'agents';
 let countdownInterval: ReturnType<typeof setInterval> | null = null;
 
 function setOverlayState(state: OverlayState) {
   overlayState = state;
-  phaseStatus.classList.toggle('hidden', state !== 'agents');
   agentList.classList.toggle('hidden', state !== 'agents');
   countdown.classList.toggle('hidden', state !== 'countdown');
 }
@@ -92,6 +75,7 @@ function startCountdown(timestamp: number, duration: number) {
         clearInterval(countdownInterval);
         countdownInterval = null;
       }
+      ipcRenderer.send('hide-overlay');
     }
   }
   update();
@@ -112,10 +96,6 @@ function normalizeAgentNames(names: Record<number, string>): Record<number, stri
     normalized[i] = names[i] ?? '';
   }
   return normalized;
-}
-
-function setPhaseName(phase: string) {
-  phaseStatus.textContent = phase;
 }
 
 function updateAgentRow(agentId: number, isReady: boolean, displayName: string) {
@@ -189,29 +169,11 @@ function applyAgentStates(states: Record<number, boolean>, names: Record<number,
   refreshAgentListDisplay();
 }
 
-function renderRolesForPhase(phase: string) {
-  agentList.innerHTML = '';
-  const roles = phaseRoles[phase] ?? {};
-  const entries = Object.entries(roles)
-    .filter(([, role]) => role?.trim())
-    .sort(([a], [b]) => Number(a) - Number(b));
-  for (const [, role] of entries) {
-    const row = document.createElement('div');
-    row.className = 'agent-row role-row';
-    row.textContent = role;
-    agentList.appendChild(row);
-  }
-}
-
 function refreshAgentListDisplay() {
-  if (currentPhase === 'Ready') {
-    const joinedIds = getJoinedAgentIds(agentNameState);
-    renderJoinedAgents(joinedIds);
-    for (const id of joinedIds) {
-      updateAgentRow(id, agentStates[id], agentNameState[id]);
-    }
-  } else {
-    renderRolesForPhase(currentPhase);
+  const joinedIds = getJoinedAgentIds(agentNameState);
+  renderJoinedAgents(joinedIds);
+  for (const id of joinedIds) {
+    updateAgentRow(id, agentStates[id], agentNameState[id]);
   }
 }
 
@@ -226,34 +188,23 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
     applyAgentStates(data.agents ?? {}, data.names ?? {});
   } else if (data.type === 'countdown') {
     startCountdown(data.timestamp, data.duration);
-  } else if (data.type === 'phase_config') {
-    const msg = data as PhaseConfigMessage;
-    currentPhase = msg.currentPhase ?? 'Ready';
-    setPhaseName(currentPhase);
-    refreshAgentListDisplay();
-    if (overlayState === 'agents') {
+  } else if (data.type === 'travel_mode') {
+    if (data.active) {
+      modeIndicator.classList.remove('hidden');
+      agentList.classList.add('travel-mode');
       setOverlayState('agents');
+    } else {
+      modeIndicator.classList.add('hidden');
+      agentList.classList.remove('travel-mode');
     }
-  } else if (data.type === 'roles_config') {
-    const msg = data as RolesConfigMessage;
-    phaseRoles = msg.roles ?? {};
-    if (currentPhase !== 'Ready') {
-      refreshAgentListDisplay();
-    }
-  } else if (data.type === 'phase') {
-    currentPhase = (data as PhaseMessage).phase;
-    setPhaseName(currentPhase);
-    refreshAgentListDisplay();
   } else if (data.type === 'reset') {
     if (countdownInterval) {
       clearInterval(countdownInterval);
       countdownInterval = null;
     }
-    currentPhase = 'Ready';
-    setPhaseName(currentPhase);
+    modeIndicator.classList.add('hidden');
+    agentList.classList.remove('travel-mode');
     refreshAgentListDisplay();
     setOverlayState('agents');
   }
 });
-
-setPhaseName('Ready');

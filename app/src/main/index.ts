@@ -6,13 +6,16 @@ import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 autoUpdater.autoDownload = true;
 autoUpdater.autoInstallOnAppQuit = true;
 
-// Load RobotJS lazily to avoid startup failure if native rebuild is missing.
+// Load RobotJS — required for key simulation features.
 let robot: { keyTap: (key: string) => void } | null = null;
+let robotjsError: string | null = null;
 try {
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   robot = require('@jitsi/robotjs');
 } catch (error) {
-  console.warn('RobotJS not available. Key simulation features will be disabled.', error);
+  const msg = error instanceof Error ? error.message : String(error);
+  robotjsError = `RobotJS failed to load: ${msg}`;
+  console.error(robotjsError);
 }
 
 let connectWindow: BrowserWindow | null = null;
@@ -22,8 +25,10 @@ let pendingOverlayMessages: unknown[] = [];
 
 function createConnectWindow() {
   connectWindow = new BrowserWindow({
-    width: 400,
-    height: 600,
+    width: 420,
+    height: 580,
+    minWidth: 360,
+    minHeight: 480,
     resizable: true,
     frame: true,
     webPreferences: {
@@ -35,7 +40,13 @@ function createConnectWindow() {
   });
 
   connectWindow.loadFile(path.join(__dirname, '../renderer/connect/index.html'));
-  
+
+  connectWindow.webContents.on('did-finish-load', () => {
+    if (robotjsError && connectWindow) {
+      connectWindow.webContents.send('app-error', robotjsError);
+    }
+  });
+
   connectWindow.on('closed', () => {
     connectWindow = null;
     // Close overlay when main window closes
@@ -91,66 +102,68 @@ function createOverlayWindow() {
   });
 }
 
-function registerGlobalHotkey() {
-  // Register Ctrl+Shift+R for ready toggle
-  const registered = globalShortcut.register('CommandOrControl+Shift+R', () => {
-    console.log('Hotkey pressed: Ready toggle');
-    // Send to connect window to broadcast via WebSocket
+interface KeybindsConfig {
+  ready: string;
+  start: string;
+  testRoll: string;
+  rollDelaySeconds?: number;
+}
+
+const DEFAULT_KEYBINDS: KeybindsConfig = {
+  ready: 'CommandOrControl+Shift+R',
+  start: 'CommandOrControl+Shift+S',
+  testRoll: 'CommandOrControl+Shift+K',
+};
+
+let currentKeybinds: KeybindsConfig = { ...DEFAULT_KEYBINDS };
+
+function registerKeybinds(config: KeybindsConfig) {
+  globalShortcut.unregisterAll();
+
+  const registered = globalShortcut.register(config.ready, () => {
+    if (connectWindow) connectWindow.webContents.send('hotkey-ready');
+  });
+  const registeredStart = globalShortcut.register(config.start, () => {
+    if (connectWindow) connectWindow.webContents.send('hotkey-start');
+  });
+  const registeredTestRoll = globalShortcut.register(config.testRoll, () => {
+    setTimeout(() => sendControlKeyTapTwice(), 1000);
+  });
+
+  const failures: string[] = [];
+  if (!registered) failures.push(`Ready (${config.ready})`);
+  if (!registeredStart) failures.push(`Start (${config.start})`);
+  if (!registeredTestRoll) failures.push(`Test Roll (${config.testRoll})`);
+
+  if (failures.length > 0) {
+    const msg = `Failed to register hotkeys: ${failures.join(', ')}. Another app may be using them.`;
+    console.error(msg);
     if (connectWindow) {
-      connectWindow.webContents.send('hotkey-ready');
+      connectWindow.webContents.send('app-error', msg);
     }
-  });
-
-  const registeredStart = globalShortcut.register('CommandOrControl+Shift+S', () => {
-    console.log('Hotkey pressed: Start');
-    if (connectWindow) {
-      connectWindow.webContents.send('hotkey-start');
-    }
-  });
-
-  const registeredAdvancePhase = globalShortcut.register('CommandOrControl+Shift+N', () => {
-    console.log('Hotkey pressed: Advance Phase');
-    if (connectWindow) {
-      connectWindow.webContents.send('hotkey-advance-phase');
-    }
-  });
-
-  // Test hotkey for double control tap (roll) - 1 second delay to switch focus
-  const registeredTestRoll = globalShortcut.register('CommandOrControl+Shift+K', () => {
-    console.log('Hotkey pressed: Test Roll (double ctrl tap) - executing in 1 second');
-    setTimeout(() => {
-      sendControlKeyTapTwice();
-    }, 1000);
-  });
-
-  if (!registered) {
-    console.error('Failed to register hotkey');
   }
-  if (!registeredStart) {
-    console.error('Failed to register start hotkey');
-  }
-  if (!registeredAdvancePhase) {
-    console.error('Failed to register advance phase hotkey');
-  }
-  if (!registeredTestRoll) {
-    console.error('Failed to register test roll hotkey');
-  }
+
+  currentKeybinds = { ...config };
 }
 
 function sendControlKeyTapTwice() {
   if (!robot) {
-    console.warn('RobotJS not loaded; skipping key taps.');
+    const msg = robotjsError || 'RobotJS not loaded — key simulation unavailable.';
+    console.error(msg);
+    if (connectWindow) connectWindow.webContents.send('app-error', msg);
     return;
   }
   robot.keyTap('control');
   setTimeout(() => {
-    robot.keyTap('control');
+    robot!.keyTap('control');
   }, 50);
 }
 
 function sendSpaceKeyTap() {
   if (!robot) {
-    console.warn('RobotJS not loaded; skipping key taps.');
+    const msg = robotjsError || 'RobotJS not loaded — key simulation unavailable.';
+    console.error(msg);
+    if (connectWindow) connectWindow.webContents.send('app-error', msg);
     return;
   }
   robot.keyTap('space');
@@ -188,6 +201,15 @@ ipcMain.on('start-ctrl-tap', () => {
 
 ipcMain.on('start-space', () => {
   sendSpaceKeyTap();
+});
+
+ipcMain.on('keybinds-config', (_event, config: KeybindsConfig) => {
+  const merged = {
+    ready: config.ready || DEFAULT_KEYBINDS.ready,
+    start: config.start || DEFAULT_KEYBINDS.start,
+    testRoll: config.testRoll || DEFAULT_KEYBINDS.testRoll,
+  };
+  registerKeybinds(merged);
 });
 
 // Auto-updater event handlers
@@ -242,7 +264,7 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null); // Remove File, Edit, View, etc. menu bar
   createConnectWindow();
   createOverlayWindow();
-  registerGlobalHotkey();
+  registerKeybinds(DEFAULT_KEYBINDS);
   setupAutoUpdater();
 });
 
