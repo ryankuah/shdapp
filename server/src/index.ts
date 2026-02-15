@@ -174,6 +174,8 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
   fs.mkdirSync(hlsDir, { recursive: true });
 
   // FFmpeg: reads WebM from stdin → HLS live output
+  // Client sends H.264 in WebM container, so we copy the codec (no re-encoding)
+  // and just remux into HLS/mpegts — this is nearly instant and uses minimal CPU.
   const ffmpegArgs = [
     // Low-latency input parsing
     '-fflags', 'nobuffer',
@@ -181,13 +183,8 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
     '-f', 'webm',
     '-i', 'pipe:0',
     '-an',                       // No audio (client captures video only)
-    // H.264 encode tuned for live
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-tune', 'zerolatency',
-    '-crf', '23',                // Quality-based (no bitrate guessing)
-    '-g', '30',                  // Keyframe every 1s at 30fps
-    '-sc_threshold', '0',
+    // Copy codec — no re-encoding needed since client sends H.264
+    '-c:v', 'copy',
     // HLS output
     '-f', 'hls',
     '-hls_time', '1',            // 1-second segments for lower latency

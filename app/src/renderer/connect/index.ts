@@ -515,8 +515,13 @@ function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     return mediaRecorder;
   }
+  // Prefer H.264 so the server can mux to HLS without re-encoding (codec copy)
+  const preferredMime = 'video/webm;codecs=h264';
+  const mimeType = MediaRecorder.isTypeSupported(preferredMime)
+    ? preferredMime
+    : 'video/webm;codecs=vp8';
   const recorder = new MediaRecorder(stream, {
-    mimeType: 'video/webm;codecs=vp8',
+    mimeType,
     videoBitsPerSecond: 2_500_000,
   });
 
