@@ -1,6 +1,10 @@
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, screen } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, screen } from 'electron';
 import * as path from 'path';
+import * as fs from 'fs';
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
+
+// Fix for HDR (10-bit) displays — desktopCapturer requires 8-bit RGBA
+app.commandLine.appendSwitch('force-color-profile', 'srgb');
 
 // Auto-updater configuration
 autoUpdater.autoDownload = true;
@@ -210,6 +214,47 @@ ipcMain.on('keybinds-config', (_event, config: KeybindsConfig) => {
     testRoll: config.testRoll || DEFAULT_KEYBINDS.testRoll,
   };
   registerKeybinds(merged);
+});
+
+// ── Streaming / Recording IPC handlers ──────────────────────────────
+
+ipcMain.handle('get-sources', async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ['window'],
+    thumbnailSize: { width: 320, height: 180 },
+  });
+  return sources.map((s) => ({
+    id: s.id,
+    name: s.name,
+    thumbnail: s.thumbnail.toDataURL(),
+  }));
+});
+
+ipcMain.handle('select-recording-folder', async () => {
+  if (!connectWindow) return null;
+  const result = await dialog.showOpenDialog(connectWindow, {
+    properties: ['openDirectory'],
+    title: 'Select Recording Folder',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0];
+});
+
+ipcMain.on('save-recording-chunk', (_event, payload: { filePath: string; chunk: number[]; isFirst: boolean }) => {
+  try {
+    const buffer = Buffer.from(payload.chunk);
+    if (payload.isFirst) {
+      fs.writeFileSync(payload.filePath, buffer);
+    } else {
+      fs.appendFileSync(payload.filePath, buffer);
+    }
+  } catch (err) {
+    console.error('Failed to write recording chunk:', err);
+  }
+});
+
+ipcMain.on('finalize-recording', (_event, filePath: string) => {
+  console.log('Recording finalized:', filePath);
 });
 
 // Auto-updater event handlers

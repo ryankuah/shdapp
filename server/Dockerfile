@@ -19,6 +19,9 @@ RUN npm run build
 # Production stage
 FROM node:20-alpine AS production
 
+# Install FFmpeg for media processing (HLS segmentation + recording)
+RUN apk add --no-cache ffmpeg
+
 WORKDIR /app
 
 # Copy package files
@@ -29,6 +32,9 @@ RUN npm ci --omit=dev
 
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
+
+# Create directories for stream data
+RUN mkdir -p /data/hls /data/recordings
 
 # Set environment variables
 ENV NODE_ENV=production

@@ -30,12 +30,14 @@ interface CountdownMessage extends WSMessage {
   duration: number;
 }
 
+// Detect dev mode: when running via `electron .`, execPath points to the
+// electron binary (e.g. electron.exe). When packaged, it's the app's own exe.
 const isDev =
+  process.execPath.toLowerCase().includes('electron') ||
   process.env.NODE_ENV === 'development' ||
-  process.env.ELECTRON_IS_DEV === 'true' ||
-  process.defaultApp === true;
+  process.env.ELECTRON_IS_DEV === 'true';
 
-const SERVER_URL = isDev ? 'ws://localhost:3000/ws' : 'wss://shd-overlay-server.fly.dev/ws';
+const SERVER_URL = isDev ? 'ws://localhost:3001/ws' : 'wss://shd-overlay-server.fly.dev/ws';
 
 // DOM elements
 const nameInput = document.getElementById('nameInput') as HTMLInputElement;
@@ -62,6 +64,18 @@ const postRaidSection = document.getElementById('postRaidSection') as HTMLDivEle
 const travelBtn = document.getElementById('travelBtn') as HTMLButtonElement;
 
 
+const captureSourceName = document.getElementById('captureSourceName') as HTMLSpanElement;
+const captureSourceBtn = document.getElementById('captureSourceBtn') as HTMLButtonElement;
+const streamBtn = document.getElementById('streamBtn') as HTMLButtonElement;
+const recordBtn = document.getElementById('recordBtn') as HTMLButtonElement;
+const recordFolderPath = document.getElementById('recordFolderPath') as HTMLSpanElement;
+const recordFolderBtn = document.getElementById('recordFolderBtn') as HTMLButtonElement;
+const windowPickerModal = document.getElementById('windowPickerModal') as HTMLDivElement;
+const windowPickerGrid = document.getElementById('windowPickerGrid') as HTMLDivElement;
+const windowPickerCancel = document.getElementById('windowPickerCancel') as HTMLButtonElement;
+
+const devBadge = document.getElementById('devBadge') as HTMLDivElement;
+
 const errorBanner = document.getElementById('errorBanner') as HTMLDivElement;
 const errorBannerText = document.getElementById('errorBannerText') as HTMLSpanElement;
 const errorBannerDismiss = document.getElementById('errorBannerDismiss') as HTMLButtonElement;
@@ -70,6 +84,7 @@ const connectionStatus = document.getElementById('connectionStatus') as HTMLDivE
 const connectionText = document.getElementById('connectionText') as HTMLSpanElement;
 
 const KEYBINDS_STORAGE_KEY = 'shd-keybinds';
+const RECORDING_FOLDER_KEY = 'shd-recording-folder';
 
 interface KeybindsConfig {
   ready: string;
@@ -101,6 +116,24 @@ let travelMode = false;
 const DEFAULT_START_DELAY_SECONDS = 2.9;
 const STARTER_DELAY_MS = 3000; // Starter always acts at exactly 3 seconds
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
+
+// ── Streaming / Recording state ──────────────────────────────
+interface CaptureSource {
+  id: string;
+  name: string;
+  thumbnail: string;
+}
+
+let mediaStream: MediaStream | null = null;
+let mediaRecorder: MediaRecorder | null = null;
+let isStreaming = false;
+let isRecording = false;
+let recordingFolder: string | null = null;
+let recordingFilePath: string | null = null;
+let isFirstRecordChunk = true;
+let cachedSourceId: string | null = null;
+let cachedSourceName: string | null = null;
+let pendingCaptureResolve: ((source: CaptureSource | null) => void) | null = null;
 
 
 function updateConnectionIndicator(status: 'connected' | 'disconnected' | 'connecting', message: string) {
@@ -207,6 +240,7 @@ function openKeybindsSettings(): void {
   keybindReadyBtn.dataset.accelerator = config.ready;
   keybindStartBtn.dataset.accelerator = config.start;
   keybindTestRollBtn.dataset.accelerator = config.testRoll;
+  updateRecordFolderDisplay();
 
   nameStep.classList.add('hidden');
   settingsStep.classList.add('hidden');
@@ -326,6 +360,337 @@ function toggleFabMenu(): void {
   }
 }
 
+// ── Window Capture ───────────────────────────────────────────
+
+function updateCaptureSourceDisplay() {
+  if (cachedSourceName) {
+    captureSourceName.textContent = cachedSourceName;
+    captureSourceName.classList.add('active');
+    captureSourceBtn.textContent = 'Change';
+  } else {
+    captureSourceName.textContent = 'No window selected';
+    captureSourceName.classList.remove('active');
+    captureSourceBtn.textContent = 'Pick Window';
+  }
+}
+
+async function pickCaptureSource(): Promise<void> {
+  try {
+    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
+    if (!sources || sources.length === 0) {
+      showError('No windows found to capture.');
+      return;
+    }
+    const selected = await showWindowPicker(sources);
+    if (selected) {
+      cachedSourceId = selected.id;
+      cachedSourceName = selected.name;
+      updateCaptureSourceDisplay();
+    }
+  } catch (err) {
+    console.error('[Capture] Failed to get sources:', err);
+    showError('Failed to list windows.');
+  }
+}
+
+function showWindowPicker(sources: CaptureSource[]): Promise<CaptureSource | null> {
+  return new Promise((resolve) => {
+    pendingCaptureResolve = resolve;
+    windowPickerGrid.innerHTML = '';
+    for (const source of sources) {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'window-picker-item';
+
+      const thumb = document.createElement('img');
+      thumb.className = 'window-picker-thumb';
+      thumb.src = source.thumbnail;
+      thumb.alt = source.name;
+
+      const name = document.createElement('span');
+      name.className = 'window-picker-name';
+      name.textContent = source.name;
+
+      item.appendChild(thumb);
+      item.appendChild(name);
+      item.addEventListener('click', () => {
+        windowPickerModal.classList.add('hidden');
+        if (pendingCaptureResolve) {
+          pendingCaptureResolve(source);
+          pendingCaptureResolve = null;
+        }
+      });
+      windowPickerGrid.appendChild(item);
+    }
+    windowPickerModal.classList.remove('hidden');
+  });
+}
+
+async function startCapture(): Promise<MediaStream | null> {
+  // If we already have an active stream, reuse it
+  if (mediaStream && mediaStream.active) {
+    return mediaStream;
+  }
+
+  try {
+    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
+    if (!sources || sources.length === 0) {
+      showError('No windows found to capture.');
+      return null;
+    }
+
+    let selectedSource: CaptureSource | null = null;
+
+    // If we have a cached source, try to find it
+    if (cachedSourceId) {
+      selectedSource = sources.find((s) => s.id === cachedSourceId) ?? null;
+    }
+
+    // Auto-detect Division 2 window
+    if (!selectedSource) {
+      selectedSource = sources.find((s) =>
+        s.name.toLowerCase().includes('the division 2') ||
+        s.name.toLowerCase().includes('division 2')
+      ) ?? null;
+    }
+
+    // Fall back to window picker
+    if (!selectedSource) {
+      selectedSource = await showWindowPicker(sources);
+    }
+
+    if (!selectedSource) {
+      return null; // User cancelled
+    }
+
+    cachedSourceId = selectedSource.id;
+    cachedSourceName = selectedSource.name;
+    updateCaptureSourceDisplay();
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: {
+        mandatory: {
+          chromeMediaSource: 'desktop',
+          chromeMediaSourceId: selectedSource.id,
+          maxWidth: 1920,
+          maxHeight: 1080,
+          maxFrameRate: 30,
+        },
+      } as unknown as MediaTrackConstraints,
+    });
+
+    mediaStream = stream;
+
+    // If the stream track ends (e.g., window closed), clean up
+    stream.getVideoTracks()[0]?.addEventListener('ended', () => {
+      console.log('[Capture] Stream track ended');
+      if (isStreaming) stopStreaming();
+      if (isRecording) stopRecording();
+    });
+
+    return stream;
+  } catch (err) {
+    console.error('[Capture] Failed:', err);
+    showError('Failed to capture window. Please try again.');
+    return null;
+  }
+}
+
+function stopCapture() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach((t) => t.stop());
+    mediaStream = null;
+  }
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  mediaRecorder = null;
+  cachedSourceId = null;
+  cachedSourceName = null;
+  updateCaptureSourceDisplay();
+}
+
+function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    return mediaRecorder;
+  }
+  const recorder = new MediaRecorder(stream, {
+    mimeType: 'video/webm;codecs=vp8',
+    videoBitsPerSecond: 2_500_000,
+  });
+
+  recorder.ondataavailable = async (event) => {
+    if (event.data.size === 0) return;
+
+    // Send to server if streaming
+    if (isStreaming && ws && ws.readyState === WebSocket.OPEN) {
+      const buffer = await event.data.arrayBuffer();
+      ws.send(buffer);
+    }
+
+    // Write to disk if recording
+    if (isRecording && recordingFilePath) {
+      const buffer = await event.data.arrayBuffer();
+      const chunk = Array.from(new Uint8Array(buffer));
+      ipcRenderer.send('save-recording-chunk', {
+        filePath: recordingFilePath,
+        chunk,
+        isFirst: isFirstRecordChunk,
+      });
+      isFirstRecordChunk = false;
+    }
+  };
+
+  recorder.onstop = () => {
+    console.log('[MediaRecorder] Stopped');
+  };
+
+  mediaRecorder = recorder;
+  return recorder;
+}
+
+// ── Streaming ────────────────────────────────────────────────
+
+async function startStreaming() {
+  if (isStreaming) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    showError('Not connected to server.');
+    return;
+  }
+
+  const stream = await startCapture();
+  if (!stream) return;
+
+  const recorder = ensureMediaRecorder(stream);
+  isStreaming = true;
+  updateStreamButton();
+
+  // Tell the server we are starting a stream
+  ws.send(JSON.stringify({ type: 'stream_start' }));
+
+  // Start recording chunks if not already started
+  if (recorder.state === 'inactive') {
+    recorder.start(500); // emit chunk every 500ms for lower latency
+  }
+
+  console.log('[Stream] Started');
+}
+
+function stopStreaming() {
+  if (!isStreaming) return;
+  isStreaming = false;
+  updateStreamButton();
+
+  // Tell the server
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'stream_stop' }));
+  }
+
+  // If not recording either, stop capture entirely
+  if (!isRecording) {
+    stopCapture();
+  }
+
+  console.log('[Stream] Stopped');
+}
+
+function updateStreamButton() {
+  if (isStreaming) {
+    streamBtn.innerHTML = '<span class="live-dot"></span> Stop Stream';
+    streamBtn.classList.add('active');
+  } else {
+    streamBtn.textContent = 'Stream';
+    streamBtn.classList.remove('active');
+  }
+}
+
+// ── Recording ────────────────────────────────────────────────
+
+async function promptRecordingFolder(): Promise<string | null> {
+  const folder: string | null = await ipcRenderer.invoke('select-recording-folder');
+  if (folder) {
+    recordingFolder = folder;
+    localStorage.setItem(RECORDING_FOLDER_KEY, folder);
+    updateRecordFolderDisplay();
+  }
+  return folder;
+}
+
+function updateRecordFolderDisplay() {
+  if (recordingFolder) {
+    // Show last part of path to keep it short
+    const parts = recordingFolder.replace(/\\/g, '/').split('/');
+    const display = parts.length > 2
+      ? '.../' + parts.slice(-2).join('/')
+      : recordingFolder;
+    recordFolderPath.textContent = display;
+    recordFolderPath.title = recordingFolder;
+  } else {
+    recordFolderPath.textContent = 'Not set';
+    recordFolderPath.title = '';
+  }
+}
+
+async function startRecording() {
+  if (isRecording) return;
+
+  // Ensure recording folder is set
+  if (!recordingFolder) {
+    const folder = await promptRecordingFolder();
+    if (!folder) return; // user cancelled
+  }
+
+  const stream = await startCapture();
+  if (!stream) return;
+
+  // Build file path
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+  const agentName = selectedName ?? 'agent';
+  const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_');
+  recordingFilePath = `${recordingFolder}/${safeName}_${timestamp}.webm`.replace(/\//g, '\\');
+  isFirstRecordChunk = true;
+  isRecording = true;
+  updateRecordButton();
+
+  const recorder = ensureMediaRecorder(stream);
+
+  // Start recording chunks if not already started
+  if (recorder.state === 'inactive') {
+    recorder.start(1000);
+  }
+
+  console.log('[Record] Started:', recordingFilePath);
+}
+
+function stopRecording() {
+  if (!isRecording) return;
+  isRecording = false;
+  updateRecordButton();
+
+  if (recordingFilePath) {
+    ipcRenderer.send('finalize-recording', recordingFilePath);
+    recordingFilePath = null;
+  }
+
+  // If not streaming either, stop capture entirely
+  if (!isStreaming) {
+    stopCapture();
+  }
+
+  console.log('[Record] Stopped');
+}
+
+function updateRecordButton() {
+  if (isRecording) {
+    recordBtn.innerHTML = '<span class="rec-dot"></span> Stop Rec';
+    recordBtn.classList.add('active');
+  } else {
+    recordBtn.textContent = 'Record';
+    recordBtn.classList.remove('active');
+  }
+}
+
 function connect() {
   // Clear any pending reconnect timer to prevent stacking
   if (reconnectTimer) {
@@ -441,6 +806,10 @@ function connect() {
 
 function disconnect() {
   intentionalDisconnect = true;
+
+  // Stop streaming/recording before disconnecting
+  if (isStreaming) stopStreaming();
+  if (isRecording) stopRecording();
 
   // Clear any pending reconnect timer
   if (reconnectTimer) {
@@ -665,6 +1034,38 @@ travelBtn.addEventListener('click', () => {
   }
 });
 
+captureSourceBtn.addEventListener('click', () => {
+  pickCaptureSource();
+});
+
+streamBtn.addEventListener('click', () => {
+  if (isStreaming) {
+    stopStreaming();
+  } else {
+    startStreaming();
+  }
+});
+
+recordBtn.addEventListener('click', () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+});
+
+recordFolderBtn.addEventListener('click', () => {
+  promptRecordingFolder();
+});
+
+windowPickerCancel.addEventListener('click', () => {
+  windowPickerModal.classList.add('hidden');
+  if (pendingCaptureResolve) {
+    pendingCaptureResolve(null);
+    pendingCaptureResolve = null;
+  }
+});
+
 setupKeybindCapture(keybindReadyBtn, 'ready');
 setupKeybindCapture(keybindStartBtn, 'start');
 setupKeybindCapture(keybindTestRollBtn, 'testRoll');
@@ -678,15 +1079,27 @@ document.addEventListener('click', (e) => {
     closeFabMenu();
   }
 });
+// Show DEV badge immediately when running in development
+if (isDev && devBadge) {
+  devBadge.classList.remove('hidden');
+  console.log('[DEV] Running in development mode — connecting to', SERVER_URL);
+}
+
 // Load saved keybinds (includes roll delay) and send to main process
 const initialKeybinds = loadKeybinds();
 setDelaySeconds(initialKeybinds.rollDelaySeconds);
 startDelayMs = initialKeybinds.rollDelaySeconds * 1000;
 ipcRenderer.send('keybinds-config', initialKeybinds);
 
+// Load saved recording folder
+recordingFolder = localStorage.getItem(RECORDING_FOLDER_KEY);
+updateRecordFolderDisplay();
+
 // Auto-connect on load
 document.addEventListener('DOMContentLoaded', () => {
   updateReadyButton();
+  updateStreamButton();
+  updateRecordButton();
   const savedName = localStorage.getItem('shd-display-name');
   if (savedName) {
     nameInput.value = savedName;
