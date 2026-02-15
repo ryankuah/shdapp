@@ -32,6 +32,6 @@ primary_region = "iad"
   initial_size = 10
 
 [[vm]]
-  memory = "1024mb"
+  memory = "4096mb"
   cpu_kind = "performance"
   cpus = 2
