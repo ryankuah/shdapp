@@ -522,7 +522,7 @@ function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
     : 'video/webm;codecs=vp8';
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 2_500_000,
+    videoBitsPerSecond: 6_000_000,
   });
 
   recorder.ondataavailable = async (event) => {
