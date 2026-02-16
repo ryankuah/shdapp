@@ -419,7 +419,7 @@ function broadcastStreamStatus() {
 }
 
 // Handle incoming messages
-function handleMessage(ws: WebSocket, data: string) {
+async function handleMessage(ws: WebSocket, data: string) {
   try {
     const message = JSON.parse(data) as WSMessage;
     fastify.log.info({ type: message.type }, 'Received message');
@@ -532,9 +532,10 @@ function handleMessage(ws: WebSocket, data: string) {
           fastify.log.warn('Stream start from unassigned client');
           break;
         }
+        // If a previous stream is still active, tear it down first
         if (activeStreams.has(agentId)) {
-          ws.send(JSON.stringify({ type: 'error', message: 'Already streaming' }));
-          break;
+          fastify.log.info(`[Stream] Stopping previous stream for agent ${agentId} before restart`);
+          await stopStreamAndUpload(agentId);
         }
         const name = agentNames.get(agentId) ?? `Agent_${agentId}`;
         startStreamPipeline(agentId, name);
@@ -654,7 +655,9 @@ async function registerRoutes() {
       if (isBinary) {
         handleVideoChunk(ws, data);
       } else {
-        handleMessage(ws, data.toString());
+        handleMessage(ws, data.toString()).catch((err) => {
+          fastify.log.error({ err }, 'Error handling message');
+        });
       }
     });
 

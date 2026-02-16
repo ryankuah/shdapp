@@ -567,17 +567,21 @@ async function startStreaming() {
   const stream = await startCapture();
   if (!stream) return;
 
-  const recorder = ensureMediaRecorder(stream);
+  // Always create a fresh MediaRecorder so FFmpeg receives a clean WebM header
+  // with codec initialization data at the start of every stream session.
+  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+    mediaRecorder.stop();
+  }
+  mediaRecorder = null;
+
   isStreaming = true;
   updateStreamButton();
 
   // Tell the server we are starting a stream
   ws.send(JSON.stringify({ type: 'stream_start' }));
 
-  // Start recording chunks if not already started
-  if (recorder.state === 'inactive') {
-    recorder.start(500); // emit chunk every 500ms for lower latency
-  }
+  const recorder = ensureMediaRecorder(stream);
+  recorder.start(500); // emit chunk every 500ms for lower latency
 
   console.log('[Stream] Started');
 }
