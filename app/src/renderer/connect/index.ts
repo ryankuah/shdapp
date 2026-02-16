@@ -860,6 +860,9 @@ function sendReady() {
     const message = { type: 'ready', value: isReady };
     ws.send(JSON.stringify(message));
     updateReadyButton();
+    if (travelMode) {
+      ipcRenderer.send('update-overlay', { type: 'travel_ready', ready: isReady });
+    }
     console.log('[WS] Sent:', message);
   } else {
     console.warn('Not connected to server');

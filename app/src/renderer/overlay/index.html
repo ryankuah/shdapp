@@ -50,10 +50,6 @@
       gap: 4px;
     }
 
-    .agent-list.travel-mode {
-      top: 58px;
-    }
-
     /* ── Agent Row ────────────────────────────────────── */
     .agent-row {
       display: flex;
@@ -175,11 +171,23 @@
       backdrop-filter: blur(8px);
       -webkit-backdrop-filter: blur(8px);
       animation: travelGlow 2s ease-in-out infinite;
+      transition: color 0.3s ease, border-bottom-color 0.3s ease;
+    }
+
+    .mode-indicator.travel-ready {
+      color: var(--success);
+      border-bottom-color: rgba(63, 185, 80, 0.5);
+      animation: travelReadyGlow 2s ease-in-out infinite;
     }
 
     @keyframes travelGlow {
       0%, 100% { border-bottom-color: rgba(88, 166, 255, 0.3); text-shadow: 0 0 0 transparent; }
       50% { border-bottom-color: rgba(88, 166, 255, 0.6); text-shadow: 0 0 12px var(--blue-glow); }
+    }
+
+    @keyframes travelReadyGlow {
+      0%, 100% { border-bottom-color: rgba(63, 185, 80, 0.3); text-shadow: 0 0 0 transparent; }
+      50% { border-bottom-color: rgba(63, 185, 80, 0.6); text-shadow: 0 0 12px var(--success-glow); }
     }
 
     /* ── Utility ──────────────────────────────────────── */

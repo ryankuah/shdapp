@@ -28,12 +28,18 @@ interface TravelModeMessage {
   active: boolean;
 }
 
+interface TravelReadyMessage {
+  type: 'travel_ready';
+  ready: boolean;
+}
+
 type OverlayMessage =
   | ReadyStateMessage
   | AgentAssignedMessage
   | CountdownMessage
   | ResetMessage
-  | TravelModeMessage;
+  | TravelModeMessage
+  | TravelReadyMessage;
 
 type OverlayState = 'agents' | 'countdown';
 
@@ -191,19 +197,23 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
   } else if (data.type === 'travel_mode') {
     if (data.active) {
       modeIndicator.classList.remove('hidden');
-      agentList.classList.add('travel-mode');
-      setOverlayState('agents');
+      modeIndicator.classList.remove('travel-ready');
+      agentList.classList.add('hidden');
     } else {
       modeIndicator.classList.add('hidden');
-      agentList.classList.remove('travel-mode');
+      modeIndicator.classList.remove('travel-ready');
+      agentList.classList.remove('hidden');
     }
+  } else if (data.type === 'travel_ready') {
+    modeIndicator.classList.toggle('travel-ready', data.ready);
   } else if (data.type === 'reset') {
     if (countdownInterval) {
       clearInterval(countdownInterval);
       countdownInterval = null;
     }
     modeIndicator.classList.add('hidden');
-    agentList.classList.remove('travel-mode');
+    modeIndicator.classList.remove('travel-ready');
+    agentList.classList.remove('hidden');
     refreshAgentListDisplay();
     setOverlayState('agents');
   }
