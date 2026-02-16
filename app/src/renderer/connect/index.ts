@@ -131,8 +131,7 @@ let isRecording = false;
 let recordingFolder: string | null = null;
 let recordingFilePath: string | null = null;
 let isFirstRecordChunk = true;
-let cachedSourceId: string | null = null;
-let cachedSourceName: string | null = null;
+let cachedSource: CaptureSource | null = null;
 let pendingCaptureResolve: ((source: CaptureSource | null) => void) | null = null;
 
 
@@ -363,8 +362,8 @@ function toggleFabMenu(): void {
 // ── Window Capture ───────────────────────────────────────────
 
 function updateCaptureSourceDisplay() {
-  if (cachedSourceName) {
-    captureSourceName.textContent = cachedSourceName;
+  if (cachedSource) {
+    captureSourceName.textContent = cachedSource.name;
     captureSourceName.classList.add('active');
     captureSourceBtn.textContent = 'Change';
   } else {
@@ -383,8 +382,7 @@ async function pickCaptureSource(): Promise<void> {
     }
     const selected = await showWindowPicker(sources);
     if (selected) {
-      cachedSourceId = selected.id;
-      cachedSourceName = selected.name;
+      cachedSource = selected;
       updateCaptureSourceDisplay();
     }
   } catch (err) {
@@ -433,41 +431,36 @@ async function startCapture(): Promise<MediaStream | null> {
   }
 
   try {
-    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
-    if (!sources || sources.length === 0) {
-      showError('No windows found to capture.');
-      return null;
-    }
+    let selectedSource = cachedSource;
 
-    let selectedSource: CaptureSource | null = null;
-
-    // If we have a cached source, try to find it
-    if (cachedSourceId) {
-      selectedSource = sources.find((s) => s.id === cachedSourceId) ?? null;
-    }
-
-    // Auto-detect Division 2 window
+    // If nothing cached, find or pick a window
     if (!selectedSource) {
+      const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
+      if (!sources || sources.length === 0) {
+        showError('No windows found to capture.');
+        return null;
+      }
+
+      // Auto-detect Division 2 window
       selectedSource = sources.find((s) =>
         s.name.toLowerCase().includes('the division 2') ||
         s.name.toLowerCase().includes('division 2')
       ) ?? null;
-    }
 
-    // Fall back to window picker
-    if (!selectedSource) {
-      selectedSource = await showWindowPicker(sources);
+      if (!selectedSource) {
+        selectedSource = await showWindowPicker(sources);
+      }
     }
 
     if (!selectedSource) {
       return null; // User cancelled
     }
 
-    cachedSourceId = selectedSource.id;
-    cachedSourceName = selectedSource.name;
+    cachedSource = selectedSource;
     updateCaptureSourceDisplay();
 
-    const stream = await navigator.mediaDevices.getUserMedia({
+    // Capture video from the selected window
+    const videoStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         mandatory: {
@@ -479,6 +472,29 @@ async function startCapture(): Promise<MediaStream | null> {
         },
       } as unknown as MediaTrackConstraints,
     });
+
+    // Grab system audio via getDisplayMedia (loopback from main process)
+    // and merge it with the window video track.
+    let stream: MediaStream;
+    try {
+      await ipcRenderer.invoke('set-pending-display', null);
+      const audioStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true, // required by the API, we discard this track
+        audio: true,
+      });
+      audioStream.getVideoTracks().forEach((t) => t.stop());
+      const audioTrack = audioStream.getAudioTracks()[0];
+      if (audioTrack) {
+        stream = new MediaStream([...videoStream.getVideoTracks(), audioTrack]);
+        console.log('[Capture] Window video + system audio merged');
+      } else {
+        stream = videoStream;
+        console.log('[Capture] No audio track from loopback, video only');
+      }
+    } catch (audioErr) {
+      console.warn('[Capture] Could not get system audio, continuing without:', audioErr);
+      stream = videoStream;
+    }
 
     mediaStream = stream;
 
@@ -506,8 +522,7 @@ function stopCapture() {
     mediaRecorder.stop();
   }
   mediaRecorder = null;
-  cachedSourceId = null;
-  cachedSourceName = null;
+  cachedSource = null;
   updateCaptureSourceDisplay();
 }
 
@@ -515,14 +530,18 @@ function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     return mediaRecorder;
   }
-  // Prefer H.264 so the server can mux to HLS without re-encoding (codec copy)
-  const preferredMime = 'video/webm;codecs=h264';
-  const mimeType = MediaRecorder.isTypeSupported(preferredMime)
-    ? preferredMime
-    : 'video/webm;codecs=vp8';
+  // Prefer H.264+Opus so the server can copy video and transcode audio for HLS
+  const mimeOptions = [
+    'video/webm;codecs=h264,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=h264',
+    'video/webm;codecs=vp8',
+  ];
+  const mimeType = mimeOptions.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
   const recorder = new MediaRecorder(stream, {
     mimeType,
     videoBitsPerSecond: 6_000_000,
+    audioBitsPerSecond: 128_000,
   });
 
   recorder.ondataavailable = async (event) => {

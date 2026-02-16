@@ -45,6 +45,17 @@ function createConnectWindow() {
 
   connectWindow.loadFile(path.join(__dirname, '../renderer/connect/index.html'));
 
+  // Handle getDisplayMedia() calls from the renderer.
+  // Used to grab system audio loopback — the video track is discarded by the renderer.
+  connectWindow.webContents.session.setDisplayMediaRequestHandler(async (_request, callback) => {
+    const sources = await desktopCapturer.getSources({ types: ['screen'] });
+    if (!sources[0]) {
+      callback({});
+      return;
+    }
+    callback({ video: sources[0], audio: 'loopback' });
+  });
+
   connectWindow.webContents.on('did-finish-load', () => {
     if (robotjsError && connectWindow) {
       connectWindow.webContents.send('app-error', robotjsError);
@@ -229,6 +240,10 @@ ipcMain.handle('get-sources', async () => {
     thumbnail: s.thumbnail.toDataURL(),
   }));
 });
+
+// No-op — the renderer calls this before getDisplayMedia() to signal intent.
+// The handler always picks the first screen source for audio loopback.
+ipcMain.handle('set-pending-display', () => {});
 
 ipcMain.handle('select-recording-folder', async () => {
   if (!connectWindow) return null;

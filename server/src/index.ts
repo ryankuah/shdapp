@@ -182,9 +182,13 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
     '-flags', 'low_delay',
     '-f', 'webm',
     '-i', 'pipe:0',
-    '-an',                       // No audio (client captures video only)
-    // Copy codec — no re-encoding needed since client sends H.264
+    // Copy video codec — no re-encoding needed since client sends H.264
     '-c:v', 'copy',
+    // Transcode Opus audio → AAC (required for HLS/mpegts).
+    // If no audio track is present (window capture), FFmpeg silently ignores these.
+    '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
+    // Don't fail if audio stream is missing (window sources have no audio)
+    '-map', '0:v:0', '-map', '0:a:0?',
     // HLS output
     '-f', 'hls',
     '-hls_time', '1',            // 1-second segments for lower latency
@@ -243,14 +247,29 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
 
 function handleVideoChunk(ws: WebSocket, chunk: Buffer) {
   const agentId = clientAgents.get(ws);
-  if (!agentId) return;
+  if (!agentId) {
+    fastify.log.warn(`[VideoChunk] Received ${chunk.length} bytes from unassigned client`);
+    return;
+  }
 
   const stream = activeStreams.get(agentId);
-  if (!stream) return;
+  if (!stream) {
+    fastify.log.warn(`[VideoChunk] Received ${chunk.length} bytes for agent ${agentId} but no active stream`);
+    return;
+  }
+
+  // Log first chunk and periodic updates
+  if (stream.totalBytes === 0) {
+    fastify.log.info(`[VideoChunk] First chunk for agent ${agentId}: ${chunk.length} bytes (header: ${chunk.slice(0, 4).toString('hex')})`);
+  } else if (stream.totalBytes % (1024 * 1024) < chunk.length) {
+    fastify.log.info(`[VideoChunk] Agent ${agentId}: ${(stream.totalBytes / 1024 / 1024).toFixed(1)} MB received`);
+  }
 
   // Feed to FFmpeg for HLS transcoding
   if (stream.ffmpegProcess.stdin && !stream.ffmpegProcess.stdin.destroyed) {
     stream.ffmpegProcess.stdin.write(chunk);
+  } else {
+    fastify.log.warn(`[VideoChunk] Agent ${agentId}: FFmpeg stdin is destroyed, dropping chunk`);
   }
   // Write raw WebM to recording file
   if (stream.recordingStream && !stream.recordingStream.destroyed) {
@@ -259,13 +278,34 @@ function handleVideoChunk(ws: WebSocket, chunk: Buffer) {
   stream.totalBytes += chunk.length;
 }
 
+/** Remux a WebM file so the container has correct duration in the header. */
+function remuxWebm(inputPath: string, outputPath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(FFMPEG_BIN, [
+      '-i', inputPath,
+      '-c', 'copy',       // no re-encoding, just remux
+      '-y',               // overwrite output
+      outputPath,
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+
+    let stderr = '';
+    proc.stderr?.on('data', (d: Buffer) => { stderr += d.toString(); });
+
+    proc.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`FFmpeg remux exited with code ${code}: ${stderr.slice(-500)}`));
+    });
+    proc.on('error', reject);
+  });
+}
+
 async function stopStreamAndUpload(agentId: number): Promise<void> {
   // Remove from activeStreams FIRST so no new chunks are written
   const stream = activeStreams.get(agentId);
   if (!stream) return;
   activeStreams.delete(agentId);
 
-  fastify.log.info(`[Stream] Stopping pipeline for agent ${agentId}`);
+  fastify.log.info(`[Stream] Stopping pipeline for agent ${agentId} (received ${stream.totalBytes} bytes total)`);
 
   // Close recording stream
   try {
@@ -304,6 +344,22 @@ async function stopStreamAndUpload(agentId: number): Promise<void> {
       resolve();
     });
   });
+
+  // Remux the raw WebM so the container has proper duration metadata.
+  // MediaRecorder writes a "streaming" WebM with unknown duration, which
+  // causes browsers to show no seekbar / no length in the video player.
+  const fixedPath = stream.recordingPath.replace(/\.webm$/, '_fixed.webm');
+  try {
+    await remuxWebm(stream.recordingPath, fixedPath);
+    // Replace the original with the fixed file
+    fs.unlinkSync(stream.recordingPath);
+    fs.renameSync(fixedPath, stream.recordingPath);
+    fastify.log.info(`[Remux] Fixed duration metadata for agent ${agentId}`);
+  } catch (err) {
+    fastify.log.warn({ err }, `[Remux] Failed to fix WebM for agent ${agentId}, uploading original`);
+    // Clean up partial fixed file if it exists
+    try { if (fs.existsSync(fixedPath)) fs.unlinkSync(fixedPath); } catch { /* ignore */ }
+  }
 
   // Upload recording to Convex
   try {
