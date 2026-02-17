@@ -536,12 +536,12 @@ function stopCapture() {
 }
 
 function getBitrateForQuality(quality: QualitySettings): number {
-  // MediaRecorder routinely undershoots the target by 50-70%, so request
-  // much higher than the actual desired bitrate.
+  // Request ~2x desired bitrate since MediaRecorder undershoots.
+  // Server re-encodes with CRF so exact client bitrate is less critical.
   if (quality.height >= 1080) {
-    return quality.fps >= 60 ? 30_000_000 : 24_000_000;
+    return quality.fps >= 60 ? 16_000_000 : 12_000_000;
   }
-  return quality.fps >= 60 ? 20_000_000 : 16_000_000;
+  return quality.fps >= 60 ? 10_000_000 : 8_000_000;
 }
 
 function ensureMediaRecorder(stream: MediaStream): MediaRecorder {

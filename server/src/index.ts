@@ -96,7 +96,7 @@ async function registerPlugins() {
 
   await fastify.register(fastifyWebsocket, {
     options: {
-      maxPayload: 1024 * 1024 * 5 // 5MB max message size (video chunks)
+      maxPayload: 1024 * 1024 * 16 // 16MB max message size (video chunks at high bitrate)
     }
   });
 }
