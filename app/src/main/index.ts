@@ -82,6 +82,36 @@ interface FFmpegStreamConfig {
   height: number;
   fps: number;
   recordingPath?: string;
+  audioDevice?: string;
+}
+
+async function listAudioDevices(): Promise<string[]> {
+  return new Promise((resolve) => {
+    const proc = execFile(ffmpegPath, [
+      '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy',
+    ], { timeout: 5000 }, (_err, _stdout, stderr) => {
+      const output = stderr || '';
+      const devices: string[] = [];
+      let inAudio = false;
+      for (const line of output.split('\n')) {
+        if (line.includes('DirectShow audio devices')) {
+          inAudio = true;
+          continue;
+        }
+        if (inAudio && line.includes('DirectShow video devices')) {
+          break;
+        }
+        if (inAudio) {
+          const match = line.match(/"([^"]+)"/);
+          if (match && !line.includes('Alternative name')) {
+            devices.push(match[1]);
+          }
+        }
+      }
+      resolve(devices);
+    });
+    proc.on('error', () => resolve([]));
+  });
 }
 
 let ffmpegProcess: ChildProcess | null = null;
@@ -105,37 +135,56 @@ async function startFFmpegStream(config: FFmpegStreamConfig): Promise<void> {
   const encoder = await detectHardwareEncoder();
   const { bitrate, maxrate } = getBitrateForQuality(config.width, config.height, config.fps);
 
+  const hasAudio = !!config.audioDevice;
+
   const outputArgs: string[] = [];
   if (config.recordingPath) {
     // Tee muxer: output to both pipe (MPEG-TS for streaming) and file (MP4 for recording)
+    const maps = hasAudio ? ['-map', '0:v:0', '-map', '1:a:0'] : ['-map', '0:v:0'];
     outputArgs.push(
       '-f', 'tee',
-      '-map', '0:v:0',
+      ...maps,
       `[f=mpegts]pipe:1|[f=mp4:movflags=+frag_keyframe+empty_moov]${config.recordingPath}`,
     );
   } else {
+    if (hasAudio) {
+      outputArgs.push('-map', '0:v:0', '-map', '1:a:0');
+    }
     outputArgs.push('-f', 'mpegts', 'pipe:1');
   }
 
+  const audioInputArgs: string[] = hasAudio
+    ? ['-f', 'dshow', '-i', `audio=${config.audioDevice}`]
+    : [];
+
+  const audioEncodeArgs: string[] = hasAudio
+    ? ['-c:a', 'aac', '-b:a', '128k', '-ar', '48000']
+    : [];
+
   const args = [
-    // Input: gdigrab window capture (no -video_size — capture full window, then scale)
+    // Input 0: gdigrab window capture (no -video_size — capture full window, then scale)
     '-f', 'gdigrab',
     '-framerate', String(config.fps),
     '-i', `title=${config.windowTitle}`,
+    // Input 1 (optional): audio device
+    ...audioInputArgs,
     // Scale to target resolution (handles windows that aren't exactly 1920x1080)
     '-vf', `scale=${config.width}:${config.height}:force_original_aspect_ratio=decrease,pad=${config.width}:${config.height}:(ow-iw)/2:(oh-ih)/2`,
-    // Encoder
+    // Video encoder
     ...encoder.args,
     '-b:v', bitrate,
     '-maxrate', maxrate,
     '-bufsize', `${parseInt(maxrate) * 2}M`,
     '-g', String(config.fps * 2), // keyframe every 2 seconds
     '-keyint_min', String(config.fps),
+    // Audio encoder
+    ...audioEncodeArgs,
     // Output
     ...outputArgs,
   ];
 
-  console.log(`[FFmpeg] Starting capture: ${encoder.name} ${config.width}x${config.height}@${config.fps}fps ${bitrate}`);
+  console.log(`[FFmpeg] Starting capture: ${encoder.name} ${config.width}x${config.height}@${config.fps}fps ${bitrate}${hasAudio ? ` audio="${config.audioDevice}"` : ' (no audio)'}`);
+
 
   const proc = spawn(ffmpegPath, args, {
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -439,6 +488,10 @@ ipcMain.on('start-ffmpeg-stream', (_event, config: FFmpegStreamConfig) => {
 
 ipcMain.on('stop-ffmpeg-stream', () => {
   stopFFmpegStream();
+});
+
+ipcMain.handle('get-audio-devices', async () => {
+  return listAudioDevices();
 });
 
 // Detect encoder on startup so there's no delay on first stream

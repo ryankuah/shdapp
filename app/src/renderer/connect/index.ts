@@ -134,6 +134,7 @@ interface QualitySettings {
 let isStreaming = false;
 let isRecording = false;
 let recordingFolder: string | null = null;
+let selectedAudioDevice: string | null = null;
 let pendingCaptureResolve: ((result: { source: CaptureSource; quality: QualitySettings } | null) => void) | null = null;
 
 
@@ -381,6 +382,26 @@ function setupToggleGroup(container: HTMLDivElement) {
   });
 }
 
+async function populateAudioDevices(): Promise<void> {
+  const audioSelect = document.getElementById('audioDeviceSelect') as HTMLSelectElement | null;
+  if (!audioSelect) return;
+  const devices: string[] = await ipcRenderer.invoke('get-audio-devices');
+  audioSelect.innerHTML = '<option value="">No Audio</option>';
+  for (const device of devices) {
+    const opt = document.createElement('option');
+    opt.value = device;
+    opt.textContent = device;
+    audioSelect.appendChild(opt);
+  }
+  // Restore previous selection if still available
+  if (selectedAudioDevice && devices.includes(selectedAudioDevice)) {
+    audioSelect.value = selectedAudioDevice;
+  } else {
+    selectedAudioDevice = null;
+    audioSelect.value = '';
+  }
+}
+
 function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSource; quality: QualitySettings } | null> {
   return new Promise((resolve) => {
     pendingCaptureResolve = resolve;
@@ -388,6 +409,9 @@ function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSo
 
     windowPickerGrid.innerHTML = '';
     windowPickerStart.disabled = true;
+
+    // Populate audio device dropdown
+    populateAudioDevices();
 
     // Reset quality toggles to defaults (1080p, 60fps)
     resolutionToggle.querySelectorAll('.toggle-btn').forEach((b, i) => {
@@ -424,6 +448,9 @@ function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSo
 
     const startHandler = () => {
       if (!selectedSource) return;
+      // Capture audio device selection before closing
+      const audioSelect = document.getElementById('audioDeviceSelect') as HTMLSelectElement | null;
+      selectedAudioDevice = audioSelect?.value || null;
       windowPickerModal.classList.add('hidden');
       windowPickerStart.removeEventListener('click', startHandler);
       if (pendingCaptureResolve) {
@@ -489,6 +516,7 @@ function startFFmpeg(windowTitle: string, quality: QualitySettings, recordingPat
     height: quality.height,
     fps: quality.fps,
     recordingPath,
+    audioDevice: selectedAudioDevice || undefined,
   });
 }
 
