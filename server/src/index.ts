@@ -173,17 +173,23 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
   fs.rmSync(hlsDir, { recursive: true, force: true });
   fs.mkdirSync(hlsDir, { recursive: true });
 
-  // FFmpeg: reads WebM from stdin → HLS live output
-  // Client sends H.264 in WebM container, so we copy the codec (no re-encoding)
-  // and just remux into HLS/mpegts — this is nearly instant and uses minimal CPU.
+  // FFmpeg: reads WebM from stdin → re-encode to H.264 → HLS live output.
+  // Re-encoding handles any input codec (VP8/VP9/H.264) and guarantees
+  // consistent quality via CRF regardless of what MediaRecorder delivers.
   const ffmpegArgs = [
     // Low-latency input parsing
     '-fflags', 'nobuffer',
     '-flags', 'low_delay',
     '-f', 'webm',
     '-i', 'pipe:0',
-    // Copy video codec — no re-encoding needed since client sends H.264
-    '-c:v', 'copy',
+    // Re-encode video to H.264 with quality-based rate control.
+    // ultrafast + zerolatency keeps encoding latency minimal on 2 CPUs.
+    '-c:v', 'libx264',
+    '-preset', 'ultrafast',
+    '-tune', 'zerolatency',
+    '-crf', '20',
+    '-maxrate', '8M',
+    '-bufsize', '16M',
     // Transcode Opus audio → AAC (required for HLS/mpegts).
     // If no audio track is present (window capture), FFmpeg silently ignores these.
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',

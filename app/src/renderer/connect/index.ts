@@ -536,10 +536,12 @@ function stopCapture() {
 }
 
 function getBitrateForQuality(quality: QualitySettings): number {
+  // MediaRecorder routinely undershoots the target by 50-70%, so request
+  // much higher than the actual desired bitrate.
   if (quality.height >= 1080) {
-    return quality.fps >= 60 ? 12_000_000 : 10_000_000;
+    return quality.fps >= 60 ? 30_000_000 : 24_000_000;
   }
-  return quality.fps >= 60 ? 8_000_000 : 6_000_000;
+  return quality.fps >= 60 ? 20_000_000 : 16_000_000;
 }
 
 function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
