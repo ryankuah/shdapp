@@ -85,10 +85,10 @@ function createOverlayWindow() {
     y: 0,
     transparent: true,
     frame: false,
-    alwaysOnTop: true,
     skipTaskbar: true,
     resizable: false,
     focusable: false,
+    show: false, // Don't show until renderer is loaded — prevents blank overlay
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -96,9 +96,10 @@ function createOverlayWindow() {
     },
   });
 
-  // Make window click-through
+  // Use 'screen-saver' level so overlay stays above fullscreen games
+  overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   overlayWindow.setIgnoreMouseEvents(true);
-  
+
   overlayWindow.loadFile(path.join(__dirname, '../renderer/overlay/index.html'));
 
   overlayWindow.webContents.on('did-finish-load', () => {
@@ -108,6 +109,8 @@ function createOverlayWindow() {
       overlayWindow?.webContents.send('overlay-update', msg);
     }
     pendingOverlayMessages = [];
+    // Now safe to show
+    overlayWindow?.show();
   });
   
   overlayWindow.on('closed', () => {
@@ -190,6 +193,8 @@ ipcMain.on('show-overlay', () => {
     createOverlayWindow();
   } else {
     overlayWindow.show();
+    // Re-assert on every show — Windows can lose alwaysOnTop after hide/show cycles
+    overlayWindow.setAlwaysOnTop(true, 'screen-saver');
   }
 });
 
