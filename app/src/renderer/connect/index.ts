@@ -466,15 +466,19 @@ async function startCapture(): Promise<MediaStream | null> {
     const { source, quality } = result;
     currentQuality = quality;
 
-    // Capture video from the selected window with chosen quality
+    // Capture video from the selected window with chosen quality.
+    // Set both min and max to force Chromium to deliver the exact resolution/fps.
     const videoStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         mandatory: {
           chromeMediaSource: 'desktop',
           chromeMediaSourceId: source.id,
+          minWidth: quality.width,
           maxWidth: quality.width,
+          minHeight: quality.height,
           maxHeight: quality.height,
+          minFrameRate: quality.fps,
           maxFrameRate: quality.fps,
         },
       } as unknown as MediaTrackConstraints,
@@ -612,7 +616,7 @@ async function startStreaming() {
   ws.send(JSON.stringify({ type: 'stream_start' }));
 
   const recorder = ensureMediaRecorder(stream);
-  recorder.start(500); // emit chunk every 500ms for lower latency
+  recorder.start(1000); // 1s chunks — gives encoder more data to hit target bitrate
 
   console.log('[Stream] Started');
 }
