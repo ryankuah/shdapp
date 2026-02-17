@@ -1,6 +1,6 @@
 {
   "name": "shd-speedrun-overlay",
-  "version": "1.0.22",
+  "version": "1.0.23",
   "description": "Division 2 speedrunning actions overlay",
   "main": "dist/main/index.js",
   "scripts": {

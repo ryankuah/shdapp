@@ -118,11 +118,12 @@ async function startFFmpegStream(config: FFmpegStreamConfig): Promise<void> {
   }
 
   const args = [
-    // Input: gdigrab window capture
+    // Input: gdigrab window capture (no -video_size — capture full window, then scale)
     '-f', 'gdigrab',
     '-framerate', String(config.fps),
-    '-video_size', `${config.width}x${config.height}`,
     '-i', `title=${config.windowTitle}`,
+    // Scale to target resolution (handles windows that aren't exactly 1920x1080)
+    '-vf', `scale=${config.width}:${config.height}:force_original_aspect_ratio=decrease,pad=${config.width}:${config.height}:(ow-iw)/2:(oh-ih)/2`,
     // Encoder
     ...encoder.args,
     '-b:v', bitrate,
