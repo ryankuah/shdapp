@@ -64,8 +64,6 @@ const postRaidSection = document.getElementById('postRaidSection') as HTMLDivEle
 const travelBtn = document.getElementById('travelBtn') as HTMLButtonElement;
 
 
-const captureSourceName = document.getElementById('captureSourceName') as HTMLSpanElement;
-const captureSourceBtn = document.getElementById('captureSourceBtn') as HTMLButtonElement;
 const streamBtn = document.getElementById('streamBtn') as HTMLButtonElement;
 const recordBtn = document.getElementById('recordBtn') as HTMLButtonElement;
 const recordFolderPath = document.getElementById('recordFolderPath') as HTMLSpanElement;
@@ -73,6 +71,9 @@ const recordFolderBtn = document.getElementById('recordFolderBtn') as HTMLButton
 const windowPickerModal = document.getElementById('windowPickerModal') as HTMLDivElement;
 const windowPickerGrid = document.getElementById('windowPickerGrid') as HTMLDivElement;
 const windowPickerCancel = document.getElementById('windowPickerCancel') as HTMLButtonElement;
+const windowPickerStart = document.getElementById('windowPickerStart') as HTMLButtonElement;
+const resolutionToggle = document.getElementById('resolutionToggle') as HTMLDivElement;
+const fpsToggle = document.getElementById('fpsToggle') as HTMLDivElement;
 
 const devBadge = document.getElementById('devBadge') as HTMLDivElement;
 
@@ -124,6 +125,12 @@ interface CaptureSource {
   thumbnail: string;
 }
 
+interface QualitySettings {
+  width: number;
+  height: number;
+  fps: number;
+}
+
 let mediaStream: MediaStream | null = null;
 let mediaRecorder: MediaRecorder | null = null;
 let isStreaming = false;
@@ -131,8 +138,8 @@ let isRecording = false;
 let recordingFolder: string | null = null;
 let recordingFilePath: string | null = null;
 let isFirstRecordChunk = true;
-let cachedSource: CaptureSource | null = null;
-let pendingCaptureResolve: ((source: CaptureSource | null) => void) | null = null;
+let currentQuality: QualitySettings = { width: 1920, height: 1080, fps: 60 };
+let pendingCaptureResolve: ((result: { source: CaptureSource; quality: QualitySettings } | null) => void) | null = null;
 
 
 function updateConnectionIndicator(status: 'connected' | 'disconnected' | 'connecting', message: string) {
@@ -361,40 +368,40 @@ function toggleFabMenu(): void {
 
 // ── Window Capture ───────────────────────────────────────────
 
-function updateCaptureSourceDisplay() {
-  if (cachedSource) {
-    captureSourceName.textContent = cachedSource.name;
-    captureSourceName.classList.add('active');
-    captureSourceBtn.textContent = 'Change';
-  } else {
-    captureSourceName.textContent = 'No window selected';
-    captureSourceName.classList.remove('active');
-    captureSourceBtn.textContent = 'Pick Window';
-  }
+function getPickerQuality(): QualitySettings {
+  const resBtn = resolutionToggle.querySelector('.toggle-btn.active') as HTMLButtonElement | null;
+  const fpsBtn = fpsToggle.querySelector('.toggle-btn.active') as HTMLButtonElement | null;
+  const res = resBtn?.dataset.value === '720' ? { width: 1280, height: 720 } : { width: 1920, height: 1080 };
+  const fps = fpsBtn?.dataset.value === '30' ? 30 : 60;
+  return { ...res, fps };
 }
 
-async function pickCaptureSource(): Promise<void> {
-  try {
-    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
-    if (!sources || sources.length === 0) {
-      showError('No windows found to capture.');
-      return;
-    }
-    const selected = await showWindowPicker(sources);
-    if (selected) {
-      cachedSource = selected;
-      updateCaptureSourceDisplay();
-    }
-  } catch (err) {
-    console.error('[Capture] Failed to get sources:', err);
-    showError('Failed to list windows.');
-  }
+function setupToggleGroup(container: HTMLDivElement) {
+  const buttons = container.querySelectorAll('.toggle-btn');
+  buttons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      buttons.forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
 }
 
-function showWindowPicker(sources: CaptureSource[]): Promise<CaptureSource | null> {
+function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSource; quality: QualitySettings } | null> {
   return new Promise((resolve) => {
     pendingCaptureResolve = resolve;
+    let selectedSource: CaptureSource | null = null;
+
     windowPickerGrid.innerHTML = '';
+    windowPickerStart.disabled = true;
+
+    // Reset quality toggles to defaults (1080p, 60fps)
+    resolutionToggle.querySelectorAll('.toggle-btn').forEach((b, i) => {
+      b.classList.toggle('active', i === 0);
+    });
+    fpsToggle.querySelectorAll('.toggle-btn').forEach((b, i) => {
+      b.classList.toggle('active', i === 1);
+    });
+
     for (const source of sources) {
       const item = document.createElement('button');
       item.type = 'button';
@@ -412,63 +419,63 @@ function showWindowPicker(sources: CaptureSource[]): Promise<CaptureSource | nul
       item.appendChild(thumb);
       item.appendChild(name);
       item.addEventListener('click', () => {
-        windowPickerModal.classList.add('hidden');
-        if (pendingCaptureResolve) {
-          pendingCaptureResolve(source);
-          pendingCaptureResolve = null;
-        }
+        // Deselect previous
+        windowPickerGrid.querySelectorAll('.window-picker-item').forEach((el) => el.classList.remove('selected'));
+        item.classList.add('selected');
+        selectedSource = source;
+        windowPickerStart.disabled = false;
       });
       windowPickerGrid.appendChild(item);
     }
+
+    // Handle start button
+    const startHandler = () => {
+      if (!selectedSource) return;
+      windowPickerModal.classList.add('hidden');
+      windowPickerStart.removeEventListener('click', startHandler);
+      if (pendingCaptureResolve) {
+        pendingCaptureResolve({ source: selectedSource, quality: getPickerQuality() });
+        pendingCaptureResolve = null;
+      }
+    };
+    windowPickerStart.addEventListener('click', startHandler);
+
     windowPickerModal.classList.remove('hidden');
   });
 }
 
 async function startCapture(): Promise<MediaStream | null> {
-  // If we already have an active stream, reuse it
+  // If we already have an active stream, reuse it (e.g. streaming + recording)
   if (mediaStream && mediaStream.active) {
     return mediaStream;
   }
 
   try {
-    let selectedSource = cachedSource;
-
-    // If nothing cached, find or pick a window
-    if (!selectedSource) {
-      const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
-      if (!sources || sources.length === 0) {
-        showError('No windows found to capture.');
-        return null;
-      }
-
-      // Auto-detect Division 2 window
-      selectedSource = sources.find((s) =>
-        s.name.toLowerCase().includes('the division 2') ||
-        s.name.toLowerCase().includes('division 2')
-      ) ?? null;
-
-      if (!selectedSource) {
-        selectedSource = await showWindowPicker(sources);
-      }
+    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
+    if (!sources || sources.length === 0) {
+      showError('No windows found to capture.');
+      return null;
     }
 
-    if (!selectedSource) {
+    // Always show picker with quality options
+    const result = await showWindowPicker(sources);
+    if (!result) {
       return null; // User cancelled
     }
 
-    cachedSource = selectedSource;
-    updateCaptureSourceDisplay();
+    const { source, quality } = result;
+    currentQuality = quality;
 
-    // Capture video from the selected window
+    // Capture video from the selected window with chosen quality
     const videoStream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: {
         mandatory: {
           chromeMediaSource: 'desktop',
-          chromeMediaSourceId: selectedSource.id,
-          maxWidth: 1920,
-          maxHeight: 1080,
-          maxFrameRate: 30,
+          chromeMediaSourceId: source.id,
+          maxWidth: quality.width,
+          maxHeight: quality.height,
+          maxFrameRate: quality.fps,
         },
       } as unknown as MediaTrackConstraints,
     });
@@ -522,8 +529,13 @@ function stopCapture() {
     mediaRecorder.stop();
   }
   mediaRecorder = null;
-  cachedSource = null;
-  updateCaptureSourceDisplay();
+}
+
+function getBitrateForQuality(quality: QualitySettings): number {
+  if (quality.height >= 1080) {
+    return quality.fps >= 60 ? 12_000_000 : 10_000_000;
+  }
+  return quality.fps >= 60 ? 8_000_000 : 6_000_000;
 }
 
 function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
@@ -540,7 +552,7 @@ function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
   const mimeType = mimeOptions.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
   const recorder = new MediaRecorder(stream, {
     mimeType,
-    videoBitsPerSecond: 6_000_000,
+    videoBitsPerSecond: getBitrateForQuality(currentQuality),
     audioBitsPerSecond: 128_000,
   });
 
@@ -1065,10 +1077,6 @@ travelBtn.addEventListener('click', () => {
   }
 });
 
-captureSourceBtn.addEventListener('click', () => {
-  pickCaptureSource();
-});
-
 streamBtn.addEventListener('click', () => {
   if (isStreaming) {
     stopStreaming();
@@ -1100,6 +1108,9 @@ windowPickerCancel.addEventListener('click', () => {
 setupKeybindCapture(keybindReadyBtn, 'ready');
 setupKeybindCapture(keybindStartBtn, 'start');
 setupKeybindCapture(keybindTestRollBtn, 'testRoll');
+
+setupToggleGroup(resolutionToggle);
+setupToggleGroup(fpsToggle);
 
 keybindsSettingsBackBtn.addEventListener('click', closeKeybindsSettings);
 saveKeybindsBtn.addEventListener('click', saveKeybindsSettings);

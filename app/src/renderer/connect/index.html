@@ -644,49 +644,72 @@
       background: rgba(255, 255, 255, 0.1);
     }
 
-    /* ── Capture Source Row ────────────────────────────── */
-    .capture-source-row {
+    /* ── Quality Toggle Buttons ────────────────────────── */
+    .quality-options {
+      margin-bottom: 14px;
+    }
+
+    .quality-options label {
+      margin-bottom: 6px;
+    }
+
+    .toggle-group {
       display: flex;
-      align-items: center;
-      gap: 8px;
-      width: 100%;
-      margin-bottom: 8px;
+      gap: 0;
+      margin-bottom: 10px;
     }
 
-    .capture-source-name {
+    .toggle-btn {
       flex: 1;
-      font-size: 0.75rem;
-      color: var(--text-muted);
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      padding: 8px 10px;
+      padding: 8px 12px;
+      font-size: 0.78rem;
+      font-weight: 600;
       background: var(--bg-input);
-      border: 1px solid var(--border);
-      border-radius: var(--radius-xs);
-      font-family: 'Consolas', 'SF Mono', 'Fira Code', monospace;
-    }
-
-    .capture-source-name.active {
-      color: var(--text);
-      border-color: rgba(63, 185, 80, 0.3);
-    }
-
-    .capture-source-pick {
-      width: auto !important;
-      min-width: auto;
-      padding: 8px 14px !important;
-      font-size: 0.75rem !important;
-      background: var(--bg-elevated);
       color: var(--text-secondary);
       border: 1px solid var(--border);
-      border-radius: var(--radius-xs);
-      white-space: nowrap;
+      cursor: pointer;
+      transition: all var(--transition);
     }
-    .capture-source-pick:hover {
-      background: var(--bg-card);
+    .toggle-btn:first-child {
+      border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+    }
+    .toggle-btn:last-child {
+      border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+      border-left: none;
+    }
+    .toggle-btn:hover {
+      background: var(--bg-elevated);
+    }
+    .toggle-btn.active {
+      background: var(--primary);
       border-color: var(--primary);
-      color: var(--primary);
+      color: #fff;
+    }
+    .toggle-btn.active + .toggle-btn {
+      border-left: none;
+    }
+
+    .window-picker-start {
+      background: var(--primary);
+      color: #fff;
+      margin-top: 4px;
+    }
+    .window-picker-start:hover {
+      background: var(--primary-hover);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    .window-picker-start:active {
+      background: var(--primary-active);
+    }
+    .window-picker-start:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .window-picker-item.selected {
+      border-color: var(--primary);
+      background: rgba(255, 107, 53, 0.1);
+      box-shadow: 0 0 0 2px var(--primary-glow);
     }
 
     /* ── Stream / Record Buttons ──────────────────────── */
@@ -1011,12 +1034,6 @@
         </div>
       </div>
 
-      <label class="section-label">Capture Window</label>
-      <div class="capture-source-row">
-        <span class="capture-source-name" id="captureSourceName">No window selected</span>
-        <button type="button" id="captureSourceBtn" class="capture-source-pick">Pick Window</button>
-      </div>
-
       <label class="section-label">Recording Folder</label>
       <div class="record-folder-row">
         <span id="recordFolderPath" class="record-folder-path">Not set</span>
@@ -1032,7 +1049,22 @@
     <div class="window-picker-card">
       <div class="window-picker-title">Select Window to Capture</div>
       <div id="windowPickerGrid" class="window-picker-grid"></div>
-      <button type="button" id="windowPickerCancel" class="window-picker-cancel">Cancel</button>
+
+      <div class="quality-options">
+        <label>Resolution</label>
+        <div class="toggle-group" id="resolutionToggle">
+          <button type="button" class="toggle-btn active" data-value="1080">1080p</button>
+          <button type="button" class="toggle-btn" data-value="720">720p</button>
+        </div>
+        <label>Frame Rate</label>
+        <div class="toggle-group" id="fpsToggle">
+          <button type="button" class="toggle-btn" data-value="30">30 FPS</button>
+          <button type="button" class="toggle-btn active" data-value="60">60 FPS</button>
+        </div>
+      </div>
+
+      <button type="button" id="windowPickerStart" class="window-picker-start" disabled>Start</button>
+      <button type="button" id="windowPickerCancel" class="window-picker-cancel" style="margin-top:6px">Cancel</button>
     </div>
   </div>
 
