@@ -131,14 +131,9 @@ interface QualitySettings {
   fps: number;
 }
 
-let mediaStream: MediaStream | null = null;
-let mediaRecorder: MediaRecorder | null = null;
 let isStreaming = false;
 let isRecording = false;
 let recordingFolder: string | null = null;
-let recordingFilePath: string | null = null;
-let isFirstRecordChunk = true;
-let currentQuality: QualitySettings = { width: 1920, height: 1080, fps: 60 };
 let pendingCaptureResolve: ((result: { source: CaptureSource; quality: QualitySettings } | null) => void) | null = null;
 
 
@@ -366,7 +361,7 @@ function toggleFabMenu(): void {
   }
 }
 
-// ── Window Capture ───────────────────────────────────────────
+// ── Window Picker & Quality ─────────────────────────────────────
 
 function getPickerQuality(): QualitySettings {
   const resBtn = resolutionToggle.querySelector('.toggle-btn.active') as HTMLButtonElement | null;
@@ -419,7 +414,6 @@ function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSo
       item.appendChild(thumb);
       item.appendChild(name);
       item.addEventListener('click', () => {
-        // Deselect previous
         windowPickerGrid.querySelectorAll('.window-picker-item').forEach((el) => el.classList.remove('selected'));
         item.classList.add('selected');
         selectedSource = source;
@@ -428,7 +422,6 @@ function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSo
       windowPickerGrid.appendChild(item);
     }
 
-    // Handle start button
     const startHandler = () => {
       if (!selectedSource) return;
       windowPickerModal.classList.add('hidden');
@@ -444,152 +437,66 @@ function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSo
   });
 }
 
-async function startCapture(): Promise<MediaStream | null> {
-  // If we already have an active stream, reuse it (e.g. streaming + recording)
-  if (mediaStream && mediaStream.active) {
-    return mediaStream;
-  }
-
-  try {
-    const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
-    if (!sources || sources.length === 0) {
-      showError('No windows found to capture.');
-      return null;
-    }
-
-    // Always show picker with quality options
-    const result = await showWindowPicker(sources);
-    if (!result) {
-      return null; // User cancelled
-    }
-
-    const { source, quality } = result;
-    currentQuality = quality;
-
-    // Capture video from the selected window with chosen quality.
-    // Set both min and max to force Chromium to deliver the exact resolution/fps.
-    const videoStream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: {
-        mandatory: {
-          chromeMediaSource: 'desktop',
-          chromeMediaSourceId: source.id,
-          minWidth: quality.width,
-          maxWidth: quality.width,
-          minHeight: quality.height,
-          maxHeight: quality.height,
-          minFrameRate: quality.fps,
-          maxFrameRate: quality.fps,
-        },
-      } as unknown as MediaTrackConstraints,
-    });
-
-    // Grab system audio via getDisplayMedia (loopback from main process)
-    // and merge it with the window video track.
-    let stream: MediaStream;
-    try {
-      await ipcRenderer.invoke('set-pending-display', null);
-      const audioStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true, // required by the API, we discard this track
-        audio: true,
-      });
-      audioStream.getVideoTracks().forEach((t) => t.stop());
-      const audioTrack = audioStream.getAudioTracks()[0];
-      if (audioTrack) {
-        stream = new MediaStream([...videoStream.getVideoTracks(), audioTrack]);
-        console.log('[Capture] Window video + system audio merged');
-      } else {
-        stream = videoStream;
-        console.log('[Capture] No audio track from loopback, video only');
-      }
-    } catch (audioErr) {
-      console.warn('[Capture] Could not get system audio, continuing without:', audioErr);
-      stream = videoStream;
-    }
-
-    mediaStream = stream;
-
-    // If the stream track ends (e.g., window closed), clean up
-    stream.getVideoTracks()[0]?.addEventListener('ended', () => {
-      console.log('[Capture] Stream track ended');
-      if (isStreaming) stopStreaming();
-      if (isRecording) stopRecording();
-    });
-
-    return stream;
-  } catch (err) {
-    console.error('[Capture] Failed:', err);
-    showError('Failed to capture window. Please try again.');
+/** Prompt the user to pick a window + quality settings. Returns null if cancelled. */
+async function promptCapture(): Promise<{ source: CaptureSource; quality: QualitySettings } | null> {
+  const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
+  if (!sources || sources.length === 0) {
+    showError('No windows found to capture.');
     return null;
   }
+  return showWindowPicker(sources);
 }
 
-function stopCapture() {
-  if (mediaStream) {
-    mediaStream.getTracks().forEach((t) => t.stop());
-    mediaStream = null;
-  }
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
-  }
-  mediaRecorder = null;
-}
+// ── FFmpeg-based Streaming ──────────────────────────────────────
+// FFmpeg runs in the main process (gdigrab capture + hardware H.264 encode).
+// Encoded MPEG-TS chunks arrive via IPC and are forwarded over WebSocket.
 
-function getBitrateForQuality(quality: QualitySettings): number {
-  // Request ~2x desired bitrate since MediaRecorder undershoots.
-  // Server re-encodes with CRF so exact client bitrate is less critical.
-  if (quality.height >= 1080) {
-    return quality.fps >= 60 ? 16_000_000 : 12_000_000;
-  }
-  return quality.fps >= 60 ? 10_000_000 : 8_000_000;
-}
+let ffmpegActive = false;
 
-function ensureMediaRecorder(stream: MediaStream): MediaRecorder {
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    return mediaRecorder;
+// Forward encoded chunks from main-process FFmpeg to the server
+ipcRenderer.on('ffmpeg-chunk', (_event: unknown, chunk: Buffer) => {
+  if (isStreaming && ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(chunk);
   }
-  // Prefer H.264+Opus so the server can copy video and transcode audio for HLS
-  const mimeOptions = [
-    'video/webm;codecs=h264,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm;codecs=h264',
-    'video/webm;codecs=vp8',
-  ];
-  const mimeType = mimeOptions.find((m) => MediaRecorder.isTypeSupported(m)) ?? 'video/webm';
-  const recorder = new MediaRecorder(stream, {
-    mimeType,
-    videoBitsPerSecond: getBitrateForQuality(currentQuality),
-    audioBitsPerSecond: 128_000,
+});
+
+ipcRenderer.on('ffmpeg-stopped', (_event: unknown, _code: number) => {
+  console.log('[FFmpeg] Pipeline stopped');
+  ffmpegActive = false;
+  if (isStreaming) stopStreaming();
+  if (isRecording) stopRecording();
+});
+
+ipcRenderer.on('ffmpeg-error', (_event: unknown, msg: string) => {
+  console.error('[FFmpeg] Error:', msg);
+  showError(`Capture error: ${msg}`);
+  ffmpegActive = false;
+  if (isStreaming) {
+    isStreaming = false;
+    updateStreamButton();
+  }
+  if (isRecording) {
+    isRecording = false;
+    updateRecordButton();
+  }
+});
+
+function startFFmpeg(windowTitle: string, quality: QualitySettings, recordingPath?: string) {
+  ffmpegActive = true;
+  ipcRenderer.send('start-ffmpeg-stream', {
+    windowTitle,
+    width: quality.width,
+    height: quality.height,
+    fps: quality.fps,
+    recordingPath,
   });
+}
 
-  recorder.ondataavailable = async (event) => {
-    if (event.data.size === 0) return;
-
-    // Send to server if streaming
-    if (isStreaming && ws && ws.readyState === WebSocket.OPEN) {
-      const buffer = await event.data.arrayBuffer();
-      ws.send(buffer);
-    }
-
-    // Write to disk if recording
-    if (isRecording && recordingFilePath) {
-      const buffer = await event.data.arrayBuffer();
-      const chunk = Array.from(new Uint8Array(buffer));
-      ipcRenderer.send('save-recording-chunk', {
-        filePath: recordingFilePath,
-        chunk,
-        isFirst: isFirstRecordChunk,
-      });
-      isFirstRecordChunk = false;
-    }
-  };
-
-  recorder.onstop = () => {
-    console.log('[MediaRecorder] Stopped');
-  };
-
-  mediaRecorder = recorder;
-  return recorder;
+function stopFFmpeg() {
+  if (ffmpegActive) {
+    ipcRenderer.send('stop-ffmpeg-stream');
+    ffmpegActive = false;
+  }
 }
 
 // ── Streaming ────────────────────────────────────────────────
@@ -601,25 +508,30 @@ async function startStreaming() {
     return;
   }
 
-  const stream = await startCapture();
-  if (!stream) return;
-
-  // Always create a fresh MediaRecorder so FFmpeg receives a clean WebM header
-  // with codec initialization data at the start of every stream session.
-  if (mediaRecorder && mediaRecorder.state !== 'inactive') {
-    mediaRecorder.stop();
+  // If FFmpeg is already running (e.g. recording), just enable streaming flag
+  if (ffmpegActive) {
+    isStreaming = true;
+    updateStreamButton();
+    ws.send(JSON.stringify({ type: 'stream_start' }));
+    console.log('[Stream] Started (reusing active FFmpeg)');
+    return;
   }
-  mediaRecorder = null;
+
+  const result = await promptCapture();
+  if (!result) return;
 
   isStreaming = true;
   updateStreamButton();
 
-  // Tell the server we are starting a stream
   ws.send(JSON.stringify({ type: 'stream_start' }));
 
-  const recorder = ensureMediaRecorder(stream);
-  recorder.start(1000); // 1s chunks — gives encoder more data to hit target bitrate
+  // Build recording path if also recording
+  let recordingPath: string | undefined;
+  if (isRecording && recordingFolder) {
+    recordingPath = buildRecordingPath();
+  }
 
+  startFFmpeg(result.source.name, result.quality, recordingPath);
   console.log('[Stream] Started');
 }
 
@@ -628,14 +540,13 @@ function stopStreaming() {
   isStreaming = false;
   updateStreamButton();
 
-  // Tell the server
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'stream_stop' }));
   }
 
-  // If not recording either, stop capture entirely
+  // If not recording either, stop FFmpeg entirely
   if (!isRecording) {
-    stopCapture();
+    stopFFmpeg();
   }
 
   console.log('[Stream] Stopped');
@@ -665,7 +576,6 @@ async function promptRecordingFolder(): Promise<string | null> {
 
 function updateRecordFolderDisplay() {
   if (recordingFolder) {
-    // Show last part of path to keep it short
     const parts = recordingFolder.replace(/\\/g, '/').split('/');
     const display = parts.length > 2
       ? '.../' + parts.slice(-2).join('/')
@@ -678,35 +588,38 @@ function updateRecordFolderDisplay() {
   }
 }
 
-async function startRecording() {
-  if (isRecording) return;
-
-  // Ensure recording folder is set
-  if (!recordingFolder) {
-    const folder = await promptRecordingFolder();
-    if (!folder) return; // user cancelled
-  }
-
-  const stream = await startCapture();
-  if (!stream) return;
-
-  // Build file path
+function buildRecordingPath(): string {
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
   const agentName = selectedName ?? 'agent';
   const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  recordingFilePath = `${recordingFolder}/${safeName}_${timestamp}.webm`.replace(/\//g, '\\');
-  isFirstRecordChunk = true;
+  return `${recordingFolder}\\${safeName}_${timestamp}.mp4`;
+}
+
+async function startRecording() {
+  if (isRecording) return;
+
+  if (!recordingFolder) {
+    const folder = await promptRecordingFolder();
+    if (!folder) return;
+  }
+
+  // If FFmpeg is already running (streaming), we can't add recording mid-stream
+  // since the tee output is set at FFmpeg launch. Just record to a separate file
+  // on next start. For now, require picking before streaming.
+  if (ffmpegActive) {
+    showError('Cannot start recording while streaming. Stop stream first, then start both together.');
+    return;
+  }
+
+  const result = await promptCapture();
+  if (!result) return;
+
   isRecording = true;
   updateRecordButton();
 
-  const recorder = ensureMediaRecorder(stream);
-
-  // Start recording chunks if not already started
-  if (recorder.state === 'inactive') {
-    recorder.start(1000);
-  }
-
-  console.log('[Record] Started:', recordingFilePath);
+  const recordingPath = buildRecordingPath();
+  startFFmpeg(result.source.name, result.quality, recordingPath);
+  console.log('[Record] Started:', recordingPath);
 }
 
 function stopRecording() {
@@ -714,14 +627,9 @@ function stopRecording() {
   isRecording = false;
   updateRecordButton();
 
-  if (recordingFilePath) {
-    ipcRenderer.send('finalize-recording', recordingFilePath);
-    recordingFilePath = null;
-  }
-
-  // If not streaming either, stop capture entirely
+  // If not streaming either, stop FFmpeg entirely
   if (!isStreaming) {
-    stopCapture();
+    stopFFmpeg();
   }
 
   console.log('[Record] Stopped');

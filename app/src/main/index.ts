@@ -1,6 +1,7 @@
 import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, screen } from 'electron';
 import * as path from 'path';
 import * as fs from 'fs';
+import { spawn, ChildProcess, execFile } from 'child_process';
 import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 
 // Fix for HDR (10-bit) displays — desktopCapturer requires 8-bit RGBA
@@ -20,6 +21,175 @@ try {
   const msg = error instanceof Error ? error.message : String(error);
   robotjsError = `RobotJS failed to load: ${msg}`;
   console.error(robotjsError);
+}
+
+// ── FFmpeg binary path ──────────────────────────────────────────
+const ffmpegPath: string = app.isPackaged
+  ? path.join(process.resourcesPath, 'ffmpeg.exe')
+  : (() => {
+      try { return require('ffmpeg-static') as string; }
+      catch { return 'ffmpeg'; }
+    })();
+
+// ── FFmpeg hardware encoder detection ───────────────────────────
+type EncoderConfig = { name: string; args: string[] };
+
+const ENCODER_CHAIN: EncoderConfig[] = [
+  { name: 'h264_nvenc', args: ['-c:v', 'h264_nvenc', '-preset', 'p4', '-rc', 'cbr'] },
+  { name: 'h264_amf', args: ['-c:v', 'h264_amf', '-quality', 'speed', '-rc', 'cbr'] },
+  { name: 'h264_qsv', args: ['-c:v', 'h264_qsv', '-preset', 'veryfast'] },
+  { name: 'libx264', args: ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency'] },
+];
+
+let detectedEncoder: EncoderConfig | null = null;
+
+async function detectHardwareEncoder(): Promise<EncoderConfig> {
+  if (detectedEncoder) return detectedEncoder;
+
+  for (const enc of ENCODER_CHAIN) {
+    try {
+      const ok = await new Promise<boolean>((resolve) => {
+        const proc = execFile(ffmpegPath, [
+          '-f', 'lavfi', '-i', 'nullsrc=s=256x256:d=1',
+          ...enc.args.slice(0, 2), // just -c:v <encoder>
+          '-frames:v', '1',
+          '-f', 'null', '-',
+        ], { timeout: 5000 }, (err) => {
+          resolve(!err);
+        });
+        proc.on('error', () => resolve(false));
+      });
+      if (ok) {
+        console.log(`[FFmpeg] Detected hardware encoder: ${enc.name}`);
+        detectedEncoder = enc;
+        return enc;
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  // Should not reach here since libx264 is always available
+  console.log('[FFmpeg] Falling back to libx264');
+  detectedEncoder = ENCODER_CHAIN[ENCODER_CHAIN.length - 1];
+  return detectedEncoder;
+}
+
+// ── FFmpeg capture pipeline state ───────────────────────────────
+interface FFmpegStreamConfig {
+  windowTitle: string;
+  width: number;
+  height: number;
+  fps: number;
+  recordingPath?: string;
+}
+
+let ffmpegProcess: ChildProcess | null = null;
+
+function getBitrateForQuality(width: number, height: number, fps: number): { bitrate: string; maxrate: string } {
+  if (height >= 1080) {
+    return fps >= 60
+      ? { bitrate: '8M', maxrate: '10M' }
+      : { bitrate: '6M', maxrate: '8M' };
+  }
+  return fps >= 60
+    ? { bitrate: '5M', maxrate: '6M' }
+    : { bitrate: '3M', maxrate: '4M' };
+}
+
+async function startFFmpegStream(config: FFmpegStreamConfig): Promise<void> {
+  if (ffmpegProcess) {
+    stopFFmpegStream();
+  }
+
+  const encoder = await detectHardwareEncoder();
+  const { bitrate, maxrate } = getBitrateForQuality(config.width, config.height, config.fps);
+
+  const outputArgs: string[] = [];
+  if (config.recordingPath) {
+    // Tee muxer: output to both pipe (MPEG-TS for streaming) and file (MP4 for recording)
+    outputArgs.push(
+      '-f', 'tee',
+      '-map', '0:v:0',
+      `[f=mpegts]pipe:1|[f=mp4:movflags=+frag_keyframe+empty_moov]${config.recordingPath}`,
+    );
+  } else {
+    outputArgs.push('-f', 'mpegts', 'pipe:1');
+  }
+
+  const args = [
+    // Input: gdigrab window capture
+    '-f', 'gdigrab',
+    '-framerate', String(config.fps),
+    '-video_size', `${config.width}x${config.height}`,
+    '-i', `title=${config.windowTitle}`,
+    // Encoder
+    ...encoder.args,
+    '-b:v', bitrate,
+    '-maxrate', maxrate,
+    '-bufsize', `${parseInt(maxrate) * 2}M`,
+    '-g', String(config.fps * 2), // keyframe every 2 seconds
+    '-keyint_min', String(config.fps),
+    // Output
+    ...outputArgs,
+  ];
+
+  console.log(`[FFmpeg] Starting capture: ${encoder.name} ${config.width}x${config.height}@${config.fps}fps ${bitrate}`);
+
+  const proc = spawn(ffmpegPath, args, {
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  proc.stdout?.on('data', (chunk: Buffer) => {
+    // Send encoded MPEG-TS chunks to the renderer for WebSocket forwarding
+    if (connectWindow) {
+      connectWindow.webContents.send('ffmpeg-chunk', chunk);
+    }
+  });
+
+  proc.stderr?.on('data', (data: Buffer) => {
+    const msg = data.toString().trim();
+    if (msg) {
+      console.log(`[FFmpeg] ${msg}`);
+    }
+  });
+
+  proc.on('close', (code) => {
+    console.log(`[FFmpeg] Process exited with code ${code}`);
+    ffmpegProcess = null;
+    if (connectWindow) {
+      connectWindow.webContents.send('ffmpeg-stopped', code);
+    }
+  });
+
+  proc.on('error', (err) => {
+    console.error('[FFmpeg] Process error:', err);
+    ffmpegProcess = null;
+    if (connectWindow) {
+      connectWindow.webContents.send('ffmpeg-error', err.message);
+    }
+  });
+
+  // Handle stdin errors (process may die before we stop writing)
+  proc.stdin?.on('error', () => {});
+
+  ffmpegProcess = proc;
+}
+
+function stopFFmpegStream(): void {
+  if (ffmpegProcess) {
+    console.log('[FFmpeg] Stopping capture');
+    // Send 'q' to FFmpeg stdin for graceful shutdown (finalizes MP4 recordings)
+    ffmpegProcess.stdin?.write('q');
+    // Force kill after 3 seconds if it doesn't exit
+    const proc = ffmpegProcess;
+    setTimeout(() => {
+      if (proc && !proc.killed) {
+        proc.kill('SIGKILL');
+      }
+    }, 3000);
+    ffmpegProcess = null;
+  }
 }
 
 let connectWindow: BrowserWindow | null = null;
@@ -246,10 +416,6 @@ ipcMain.handle('get-sources', async () => {
   }));
 });
 
-// No-op — the renderer calls this before getDisplayMedia() to signal intent.
-// The handler always picks the first screen source for audio loopback.
-ipcMain.handle('set-pending-display', () => {});
-
 ipcMain.handle('select-recording-folder', async () => {
   if (!connectWindow) return null;
   const result = await dialog.showOpenDialog(connectWindow, {
@@ -260,21 +426,24 @@ ipcMain.handle('select-recording-folder', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.on('save-recording-chunk', (_event, payload: { filePath: string; chunk: number[]; isFirst: boolean }) => {
-  try {
-    const buffer = Buffer.from(payload.chunk);
-    if (payload.isFirst) {
-      fs.writeFileSync(payload.filePath, buffer);
-    } else {
-      fs.appendFileSync(payload.filePath, buffer);
+// FFmpeg capture pipeline IPC
+ipcMain.on('start-ffmpeg-stream', (_event, config: FFmpegStreamConfig) => {
+  startFFmpegStream(config).catch((err) => {
+    console.error('[FFmpeg] Failed to start:', err);
+    if (connectWindow) {
+      connectWindow.webContents.send('ffmpeg-error', String(err));
     }
-  } catch (err) {
-    console.error('Failed to write recording chunk:', err);
-  }
+  });
 });
 
-ipcMain.on('finalize-recording', (_event, filePath: string) => {
-  console.log('Recording finalized:', filePath);
+ipcMain.on('stop-ffmpeg-stream', () => {
+  stopFFmpegStream();
+});
+
+// Detect encoder on startup so there's no delay on first stream
+ipcMain.handle('detect-encoder', async () => {
+  const enc = await detectHardwareEncoder();
+  return enc.name;
 });
 
 // Auto-updater event handlers
@@ -340,6 +509,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopFFmpegStream();
 });
 
 app.on('activate', () => {

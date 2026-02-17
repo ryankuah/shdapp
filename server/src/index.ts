@@ -167,33 +167,26 @@ function getAvailableAgentId(): number | null {
 function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
   const hlsDir = path.join(HLS_ROOT, String(agentId));
   const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_') || `agent_${agentId}`;
-  const recordingPath = path.join(RECORDINGS_ROOT, `${safeName}_${Date.now()}.webm`);
+  const recordingPath = path.join(RECORDINGS_ROOT, `${safeName}_${Date.now()}.ts`);
 
   // Wipe any stale segments/manifest from a previous stream
   fs.rmSync(hlsDir, { recursive: true, force: true });
   fs.mkdirSync(hlsDir, { recursive: true });
 
-  // FFmpeg: reads WebM from stdin → re-encode to H.264 → HLS live output.
-  // Re-encoding handles any input codec (VP8/VP9/H.264) and guarantees
-  // consistent quality via CRF regardless of what MediaRecorder delivers.
+  // FFmpeg: reads MPEG-TS from stdin (already H.264 encoded by client) → copy to HLS.
+  // No re-encoding needed — the client uses hardware H.264 encoding via FFmpeg gdigrab.
   const ffmpegArgs = [
     // Low-latency input parsing
     '-fflags', 'nobuffer',
     '-flags', 'low_delay',
-    '-f', 'webm',
+    '-f', 'mpegts',
     '-i', 'pipe:0',
-    // Re-encode video to H.264 with quality-based rate control.
-    // ultrafast + zerolatency keeps encoding latency minimal on 2 CPUs.
-    '-c:v', 'libx264',
-    '-preset', 'ultrafast',
-    '-tune', 'zerolatency',
-    '-crf', '20',
-    '-maxrate', '8M',
-    '-bufsize', '16M',
-    // Transcode Opus audio → AAC (required for HLS/mpegts).
-    // If no audio track is present (window capture), FFmpeg silently ignores these.
+    // Copy video codec — already H.264 from the client's hardware encoder
+    '-c:v', 'copy',
+    // Transcode audio → AAC if present (required for HLS/mpegts).
+    // If no audio track is present (gdigrab has no audio), FFmpeg silently ignores.
     '-c:a', 'aac', '-b:a', '128k', '-ar', '48000',
-    // Don't fail if audio stream is missing (window sources have no audio)
+    // Don't fail if audio stream is missing
     '-map', '0:v:0', '-map', '0:a:0?',
     // HLS output
     '-f', 'hls',
@@ -229,7 +222,7 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
     fastify.log.error({ err }, `[FFmpeg agent ${agentId}] process error`);
   });
 
-  // Write raw WebM chunks directly to disk for recording
+  // Write raw MPEG-TS chunks directly to disk for recording
   const recordingStream = fs.createWriteStream(recordingPath);
   recordingStream.on('error', (err) => {
     fastify.log.warn(`[Recording agent ${agentId}] write error: ${err.message}`);
@@ -271,21 +264,21 @@ function handleVideoChunk(ws: WebSocket, chunk: Buffer) {
     fastify.log.info(`[VideoChunk] Agent ${agentId}: ${(stream.totalBytes / 1024 / 1024).toFixed(1)} MB received`);
   }
 
-  // Feed to FFmpeg for HLS transcoding
+  // Feed to FFmpeg for HLS output (codec copy, no transcoding)
   if (stream.ffmpegProcess.stdin && !stream.ffmpegProcess.stdin.destroyed) {
     stream.ffmpegProcess.stdin.write(chunk);
   } else {
     fastify.log.warn(`[VideoChunk] Agent ${agentId}: FFmpeg stdin is destroyed, dropping chunk`);
   }
-  // Write raw WebM to recording file
+  // Write raw MPEG-TS to recording file
   if (stream.recordingStream && !stream.recordingStream.destroyed) {
     stream.recordingStream.write(chunk);
   }
   stream.totalBytes += chunk.length;
 }
 
-/** Remux a WebM file so the container has correct duration in the header. */
-function remuxWebm(inputPath: string, outputPath: string): Promise<void> {
+/** Remux a raw MPEG-TS recording to MP4 for proper seeking and metadata. */
+function remuxToMp4(inputPath: string, outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const proc = spawn(FFMPEG_BIN, [
       '-i', inputPath,
@@ -351,20 +344,18 @@ async function stopStreamAndUpload(agentId: number): Promise<void> {
     });
   });
 
-  // Remux the raw WebM so the container has proper duration metadata.
-  // MediaRecorder writes a "streaming" WebM with unknown duration, which
-  // causes browsers to show no seekbar / no length in the video player.
-  const fixedPath = stream.recordingPath.replace(/\.webm$/, '_fixed.webm');
+  // Remux the raw MPEG-TS to MP4 for proper seeking and duration metadata.
+  const mp4Path = stream.recordingPath.replace(/\.ts$/, '.mp4');
   try {
-    await remuxWebm(stream.recordingPath, fixedPath);
-    // Replace the original with the fixed file
+    await remuxToMp4(stream.recordingPath, mp4Path);
+    // Delete the raw .ts file, keep the .mp4
     fs.unlinkSync(stream.recordingPath);
-    fs.renameSync(fixedPath, stream.recordingPath);
-    fastify.log.info(`[Remux] Fixed duration metadata for agent ${agentId}`);
+    stream.recordingPath = mp4Path;
+    fastify.log.info(`[Remux] Converted to MP4 for agent ${agentId}`);
   } catch (err) {
-    fastify.log.warn({ err }, `[Remux] Failed to fix WebM for agent ${agentId}, uploading original`);
-    // Clean up partial fixed file if it exists
-    try { if (fs.existsSync(fixedPath)) fs.unlinkSync(fixedPath); } catch { /* ignore */ }
+    fastify.log.warn({ err }, `[Remux] Failed to convert to MP4 for agent ${agentId}, uploading raw TS`);
+    // Clean up partial MP4 if it exists
+    try { if (fs.existsSync(mp4Path)) fs.unlinkSync(mp4Path); } catch { /* ignore */ }
   }
 
   // Upload recording to Convex
@@ -434,7 +425,7 @@ async function uploadToConvex(stream: ActiveStream): Promise<void> {
   // Step 2: Upload the recording file to Convex storage
   const uploadRes = await fetch(uploadUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'video/webm' },
+    headers: { 'Content-Type': 'video/mp4' },
     body: fileBuffer,
   });
 
@@ -459,7 +450,7 @@ async function uploadToConvex(stream: ActiveStream): Promise<void> {
       duration,
       recordedAt: new Date(stream.startedAt).toISOString(),
       fileSize: fileBuffer.length,
-      mimeType: 'video/webm',
+      mimeType: 'video/mp4',
     }),
   });
 
