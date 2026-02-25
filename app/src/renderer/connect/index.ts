@@ -92,6 +92,7 @@ interface KeybindsConfig {
   start: string;
   testRoll: string;
   rollDelaySeconds: number;
+  rollKey: string;
 }
 
 const DEFAULT_KEYBINDS: KeybindsConfig = {
@@ -99,6 +100,7 @@ const DEFAULT_KEYBINDS: KeybindsConfig = {
   start: 'CommandOrControl+Shift+S',
   testRoll: 'CommandOrControl+Shift+K',
   rollDelaySeconds: 2.9,
+  rollKey: 'space',
 };
 
 let ws: WebSocket | null = null;
@@ -194,6 +196,7 @@ function loadKeybinds(): KeybindsConfig {
         start: String((parsed as KeybindsConfig).start || DEFAULT_KEYBINDS.start),
         testRoll: String((parsed as KeybindsConfig).testRoll || DEFAULT_KEYBINDS.testRoll),
         rollDelaySeconds: Number((parsed as KeybindsConfig).rollDelaySeconds) || DEFAULT_KEYBINDS.rollDelaySeconds,
+        rollKey: String((parsed as KeybindsConfig).rollKey || DEFAULT_KEYBINDS.rollKey),
       };
     }
   } catch {
@@ -242,6 +245,9 @@ function openKeybindsSettings(): void {
   keybindReadyBtn.dataset.accelerator = config.ready;
   keybindStartBtn.dataset.accelerator = config.start;
   keybindTestRollBtn.dataset.accelerator = config.testRoll;
+  const rollKeyBtn = document.getElementById('keybindRollKey') as HTMLButtonElement;
+  rollKeyBtn.textContent = config.rollKey;
+  rollKeyBtn.dataset.key = config.rollKey;
   updateRecordFolderDisplay();
 
   nameStep.classList.add('hidden');
@@ -312,11 +318,13 @@ function setupKeybindCapture(btn: HTMLButtonElement, key: keyof Pick<KeybindsCon
 
 function saveKeybindsSettings(): void {
   const rollDelaySeconds = getDelaySeconds();
+  const rollKeyBtn = document.getElementById('keybindRollKey') as HTMLButtonElement;
   const config: KeybindsConfig = {
     ready: keybindReadyBtn.dataset.accelerator || DEFAULT_KEYBINDS.ready,
     start: keybindStartBtn.dataset.accelerator || DEFAULT_KEYBINDS.start,
     testRoll: keybindTestRollBtn.dataset.accelerator || DEFAULT_KEYBINDS.testRoll,
     rollDelaySeconds,
+    rollKey: rollKeyBtn.dataset.key || DEFAULT_KEYBINDS.rollKey,
   };
   saveKeybinds(config);
   setDelaySeconds(rollDelaySeconds);
@@ -892,7 +900,7 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
     // Others use the customizable delay (default 2.9 seconds)
     const delay = Math.max(0, timestamp + startDelayMs - Date.now());
     setTimeout(() => {
-      ipcRenderer.send('start-ctrl-tap');
+      ipcRenderer.send('start-roll');
     }, delay);
   }
 }
@@ -1050,6 +1058,61 @@ windowPickerCancel.addEventListener('click', () => {
 setupKeybindCapture(keybindReadyBtn, 'ready');
 setupKeybindCapture(keybindStartBtn, 'start');
 setupKeybindCapture(keybindTestRollBtn, 'testRoll');
+
+// Roll key capture — captures a single key name for robotjs (not an accelerator)
+const rollKeyBtn = document.getElementById('keybindRollKey') as HTMLButtonElement;
+rollKeyBtn.addEventListener('click', () => {
+  if (rollKeyBtn.classList.contains('recording')) return;
+  const originalText = rollKeyBtn.textContent ?? '';
+  const originalKey = rollKeyBtn.dataset.key ?? '';
+  rollKeyBtn.classList.add('recording');
+  rollKeyBtn.textContent = 'Press a key...';
+
+  function cleanup() {
+    window.removeEventListener('keydown', keyHandler, true);
+    document.removeEventListener('mousedown', cancelHandler, true);
+  }
+
+  const cancelHandler = (e: MouseEvent) => {
+    if (e.target !== rollKeyBtn) {
+      rollKeyBtn.classList.remove('recording');
+      rollKeyBtn.textContent = originalText;
+      rollKeyBtn.dataset.key = originalKey;
+      cleanup();
+    }
+  };
+
+  const keyHandler = (e: KeyboardEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Map key names to robotjs-compatible names
+    const keyMap: Record<string, string> = {
+      ' ': 'space',
+      'Control': 'control',
+      'Shift': 'shift',
+      'Alt': 'alt',
+      'Meta': 'command',
+      'ArrowUp': 'up',
+      'ArrowDown': 'down',
+      'ArrowLeft': 'left',
+      'ArrowRight': 'right',
+      'Escape': 'escape',
+      'Enter': 'enter',
+      'Backspace': 'backspace',
+      'Tab': 'tab',
+      'Delete': 'delete',
+      'CapsLock': 'capslock',
+    };
+    const key = keyMap[e.key] || e.key.toLowerCase();
+    rollKeyBtn.dataset.key = key;
+    rollKeyBtn.textContent = key;
+    rollKeyBtn.classList.remove('recording');
+    cleanup();
+  };
+
+  window.addEventListener('keydown', keyHandler, { capture: true });
+  document.addEventListener('mousedown', cancelHandler, { capture: true });
+});
 
 setupToggleGroup(resolutionToggle);
 setupToggleGroup(fpsToggle);

@@ -345,12 +345,14 @@ interface KeybindsConfig {
   start: string;
   testRoll: string;
   rollDelaySeconds?: number;
+  rollKey?: string;
 }
 
 const DEFAULT_KEYBINDS: KeybindsConfig = {
   ready: 'CommandOrControl+Shift+R',
   start: 'CommandOrControl+Shift+S',
   testRoll: 'CommandOrControl+Shift+K',
+  rollKey: 'space',
 };
 
 let currentKeybinds: KeybindsConfig = { ...DEFAULT_KEYBINDS };
@@ -365,7 +367,7 @@ function registerKeybinds(config: KeybindsConfig) {
     if (connectWindow) connectWindow.webContents.send('hotkey-start');
   });
   const registeredTestRoll = globalShortcut.register(config.testRoll, () => {
-    setTimeout(() => sendControlKeyTapTwice(), 1000);
+    setTimeout(() => sendRollKeyTap(), 1000);
   });
 
   const failures: string[] = [];
@@ -384,16 +386,17 @@ function registerKeybinds(config: KeybindsConfig) {
   currentKeybinds = { ...config };
 }
 
-function sendControlKeyTapTwice() {
+function sendRollKeyTap() {
   if (!robot) {
     const msg = robotjsError || 'RobotJS not loaded — key simulation unavailable.';
     console.error(msg);
     if (connectWindow) connectWindow.webContents.send('app-error', msg);
     return;
   }
-  robot.keyTap('control');
+  const key = currentKeybinds.rollKey || 'space';
+  robot.keyTap(key);
   setTimeout(() => {
-    robot!.keyTap('control');
+    robot!.keyTap(key);
   }, 50);
 }
 
@@ -435,8 +438,8 @@ ipcMain.on('update-overlay', (_event, data) => {
   }
 });
 
-ipcMain.on('start-ctrl-tap', () => {
-  sendControlKeyTapTwice();
+ipcMain.on('start-roll', () => {
+  sendRollKeyTap();
 });
 
 ipcMain.on('start-space', () => {
@@ -448,6 +451,7 @@ ipcMain.on('keybinds-config', (_event, config: KeybindsConfig) => {
     ready: config.ready || DEFAULT_KEYBINDS.ready,
     start: config.start || DEFAULT_KEYBINDS.start,
     testRoll: config.testRoll || DEFAULT_KEYBINDS.testRoll,
+    rollKey: config.rollKey || DEFAULT_KEYBINDS.rollKey,
   };
   registerKeybinds(merged);
 });
