@@ -176,7 +176,10 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
   // FFmpeg: reads MPEG-TS from stdin (already H.264 encoded by client) → copy to HLS.
   // No re-encoding needed — the client uses hardware H.264 encoding via FFmpeg gdigrab.
   const ffmpegArgs = [
-    // Low-latency input parsing
+    // Low-latency input parsing — small probesize so FFmpeg starts outputting
+    // HLS segments immediately instead of buffering ~5MB / 5s of input first.
+    '-probesize', '32768',
+    '-analyzeduration', '0',
     '-fflags', 'nobuffer',
     '-flags', 'low_delay',
     '-f', 'mpegts',
@@ -216,6 +219,27 @@ function startStreamPipeline(agentId: number, agentName: string): ActiveStream {
 
   ffmpeg.on('close', (code) => {
     fastify.log.info(`[FFmpeg agent ${agentId}] exited with code ${code}`);
+    // If FFmpeg crashed while stream is still active, clean up and notify the client
+    const activeStream = activeStreams.get(agentId);
+    if (activeStream && activeStream.ffmpegProcess === ffmpeg) {
+      fastify.log.warn(`[FFmpeg agent ${agentId}] Unexpected exit (code ${code}), cleaning up`);
+      activeStreams.delete(agentId);
+      // Close recording stream
+      try { activeStream.recordingStream?.end(); } catch { /* ignore */ }
+      // Clean up HLS directory
+      try { fs.rmSync(activeStream.hlsDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      // Notify the client that sent this stream
+      for (const [client, id] of clientAgents) {
+        if (id === agentId && client.readyState === 1) {
+          client.send(JSON.stringify({
+            type: 'stream_error',
+            message: `Stream pipeline crashed (FFmpeg exit code ${code})`,
+          }));
+          break;
+        }
+      }
+      broadcastStreamStatus();
+    }
   });
 
   ffmpeg.on('error', (err) => {

@@ -175,7 +175,7 @@ async function startFFmpegStream(config: FFmpegStreamConfig): Promise<void> {
     '-b:v', bitrate,
     '-maxrate', maxrate,
     '-bufsize', `${parseInt(maxrate) * 2}M`,
-    '-g', String(config.fps * 2), // keyframe every 2 seconds
+    '-g', String(config.fps), // keyframe every 1 second (matches server HLS segment size)
     '-keyint_min', String(config.fps),
     // Audio encoder
     ...audioEncodeArgs,

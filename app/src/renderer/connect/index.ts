@@ -781,6 +781,14 @@ function connect() {
           travelBtn.classList.remove('execute');
           setRaidState('ready');
           ipcRenderer.send('update-overlay', { type: 'reset' });
+        } else if (message.type === 'stream_error') {
+          console.error('[Stream] Server pipeline error:', message.message);
+          showError(String(message.message ?? 'Stream pipeline failed on server'));
+          if (isStreaming) {
+            isStreaming = false;
+            updateStreamButton();
+            if (!isRecording) stopFFmpeg();
+          }
         } else if (message.type === 'error') {
           updateStatus('disconnected', String(message.message ?? 'Server error'));
         }
