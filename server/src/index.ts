@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import { startDiscordBot } from './discord';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -806,6 +807,8 @@ async function start() {
     await fastify.listen({ port, host });
     fastify.log.info(`Server listening on http://${host}:${port}`);
     fastify.log.info(`WebSocket endpoint: ws://${host}:${port}/ws`);
+
+    startDiscordBot(fastify.log);
 
     const shutdown = async (signal: string) => {
       fastify.log.info({ signal }, 'Shutting down server');
