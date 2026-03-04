@@ -96,7 +96,8 @@ const TOOLS = [
 // ── System prompt builder ────────────────────────────────────
 
 function buildSystemPrompt(events: GuildScheduledEvent[]): string {
-  const now = new Date().toISOString();
+  const tz = process.env.DISCORD_TIMEZONE || 'America/New_York';
+  const now = new Date().toLocaleString('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'long' });
 
   let eventsContext = '';
   if (events.length > 0) {
@@ -130,7 +131,13 @@ When an agent wants to create, edit, delete, or view events, use the appropriate
 
 When editing or deleting, match the agent's description to the most likely event from the scheduled events list.
 
-The current date/time is: ${now}${eventsContext}`;
+IMPORTANT — Timezone handling for event_time:
+- The community's default timezone is ${tz}.
+- If the agent specifies a timezone (e.g. "9pm EST", "8pm PST", "7pm CT"), use that timezone in the ISO 8601 offset (e.g. -05:00 for EST, -08:00 for PST, -06:00 for CST).
+- If the agent does NOT specify a timezone, assume ${tz}.
+- Always include the UTC offset in the event_time ISO 8601 string (e.g. 2026-03-01T21:00:00-05:00). Never output a bare UTC timestamp without an offset unless the agent explicitly says UTC.
+
+The current date/time is: ${now} (${tz})${eventsContext}`;
 }
 
 // ── AI caller ────────────────────────────────────────────────
@@ -294,7 +301,7 @@ export function startDiscordBot(log: {
               entityType: GuildScheduledEventEntityType.External,
               entityMetadata: { location: 'In-game' },
             });
-            await message.reply(`Event **${event.name}** created! Check the server events tab.`);
+            await message.reply(`${event.url}`);
             log.info(`[Discord] Event created: "${event.name}" at ${args.event_time} by ${message.author.tag}`);
           } catch (err) {
             log.error(`[Discord] Failed to create event: ${err}`);
