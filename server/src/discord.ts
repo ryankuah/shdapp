@@ -1,19 +1,13 @@
-import { Client, GatewayIntentBits, EmbedBuilder, Events, Partials } from 'discord.js';
-import type { Message, TextChannel, MessageReaction, User } from 'discord.js';
-import * as fs from 'fs';
-import * as path from 'path';
+import {
+  Client,
+  GatewayIntentBits,
+  Events,
+  GuildScheduledEventEntityType,
+  GuildScheduledEventPrivacyLevel,
+} from 'discord.js';
+import type { Message, GuildScheduledEvent } from 'discord.js';
 
 // ── Types ────────────────────────────────────────────────────
-
-interface StoredEvent {
-  messageId: string;
-  channelId: string;
-  title: string;
-  description: string;
-  eventTime: number; // unix seconds
-  createdBy: string; // display name
-  createdById: string; // user ID
-}
 
 interface AIToolCall {
   function: { name: string; arguments: string };
@@ -28,41 +22,6 @@ interface AIResponse {
 
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const KIMI_MODEL = 'moonshotai/kimi-k2';
-
-const RSVP_EMOJIS = ['✅', '❌', '❓'] as const;
-
-// ── Persistent event store (keyed by message ID) ─────────────
-
-const EVENTS_DIR = process.env.NODE_ENV === 'production' ? '/data' : path.join(__dirname, '../data');
-const EVENTS_FILE = path.join(EVENTS_DIR, 'events.json');
-
-const eventStore = new Map<string, StoredEvent>();
-
-function saveEvents(): void {
-  try {
-    fs.mkdirSync(EVENTS_DIR, { recursive: true });
-    const obj: Record<string, StoredEvent> = {};
-    eventStore.forEach((ev, id) => { obj[id] = ev; });
-    fs.writeFileSync(EVENTS_FILE, JSON.stringify(obj, null, 2));
-  } catch {
-    // silently ignore write errors
-  }
-}
-
-function loadEvents(): void {
-  try {
-    if (!fs.existsSync(EVENTS_FILE)) return;
-    const raw = fs.readFileSync(EVENTS_FILE, 'utf-8');
-    const obj = JSON.parse(raw) as Record<string, StoredEvent>;
-    for (const id of Object.keys(obj)) {
-      eventStore.set(id, obj[id]);
-    }
-  } catch {
-    // silently ignore read errors
-  }
-}
-
-loadEvents();
 
 // ── Tool definitions ─────────────────────────────────────────
 
@@ -81,6 +40,10 @@ const TOOLS = [
             type: 'string',
             description: 'ISO 8601 timestamp for when the event occurs (e.g. 2026-03-01T20:00:00-05:00)',
           },
+          duration_hours: {
+            type: 'number',
+            description: 'Duration of the event in hours (default: 1)',
+          },
         },
         required: ['title', 'description', 'event_time'],
       },
@@ -94,7 +57,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          event_id: { type: 'string', description: 'The message ID of the event to edit' },
+          event_id: { type: 'string', description: 'The Discord scheduled event ID' },
           title: { type: 'string', description: 'New title for the event' },
           description: { type: 'string', description: 'New description for the event' },
           event_time: { type: 'string', description: 'New ISO 8601 timestamp for the event' },
@@ -111,7 +74,7 @@ const TOOLS = [
       parameters: {
         type: 'object',
         properties: {
-          event_id: { type: 'string', description: 'The message ID of the event to delete' },
+          event_id: { type: 'string', description: 'The Discord scheduled event ID' },
         },
         required: ['event_id'],
       },
@@ -132,20 +95,18 @@ const TOOLS = [
 
 // ── System prompt builder ────────────────────────────────────
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(events: GuildScheduledEvent[]): string {
   const now = new Date().toISOString();
 
   let eventsContext = '';
-  if (eventStore.size > 0) {
-    const lines: string[] = [];
-    eventStore.forEach((ev, msgId) => {
-      lines.push(
-        `- ID: ${msgId} | Title: "${ev.title}" | Time: <t:${ev.eventTime}:F> (unix ${ev.eventTime}) | Created by: ${ev.createdBy}`,
-      );
+  if (events.length > 0) {
+    const lines = events.map((e) => {
+      const unix = Math.floor(e.scheduledStartTimestamp! / 1000);
+      return `- ID: ${e.id} | Title: "${e.name}" | Time: <t:${unix}:F> (unix ${unix})`;
     });
-    eventsContext = `\n\nCurrently tracked events:\n${lines.join('\n')}`;
+    eventsContext = `\n\nCurrently scheduled events:\n${lines.join('\n')}`;
   } else {
-    eventsContext = '\n\nNo events are currently tracked.';
+    eventsContext = '\n\nNo events are currently scheduled.';
   }
 
   return `You are ISAC (Intelligent System Analytic Computer), the AI assistant from Tom Clancy's The Division 2. You serve the Strategic Homeland Division (SHD) and communicate with Division agents through this Discord server.
@@ -161,53 +122,15 @@ Your personality and communication style:
 
 You also manage events for the SHD community. You have 4 tools available:
 - create_event: Create a new scheduled event when an agent describes one.
-- edit_event: Edit an existing event (change title, description, or time). Use the event_id from the tracked events list.
+- edit_event: Edit an existing event (change title, description, or time). Use the event_id from the scheduled events list.
 - delete_event: Delete an existing event by its event_id.
-- view_events: List all currently tracked events. Use this when an agent asks what events are coming up.
+- view_events: List all currently scheduled events. Use this when an agent asks what events are coming up.
 
 When an agent wants to create, edit, delete, or view events, use the appropriate tool. For all other messages — casual conversation, questions, Division talk — respond in character as ISAC without using any tool.
 
-When editing or deleting, match the agent's description to the most likely event from the tracked events list.
+When editing or deleting, match the agent's description to the most likely event from the scheduled events list.
 
 The current date/time is: ${now}${eventsContext}`;
-}
-
-// ── Shared embed builder ─────────────────────────────────────
-
-interface RSVPData {
-  joining: string[];
-  notJoining: string[];
-  maybe: string[];
-}
-
-function buildEventEmbed(event: StoredEvent, rsvp?: RSVPData): EmbedBuilder {
-  const descParts = [
-    event.description,
-    '',
-    `🕐 <t:${event.eventTime}:F>`,
-    `(Relative: <t:${event.eventTime}:R>)`,
-  ];
-
-  const embed = new EmbedBuilder()
-    .setTitle(`📅 ${event.title}`)
-    .setDescription(descParts.join('\n'))
-    .setColor(0x5865f2)
-    .setFooter({ text: `Created by ${event.createdBy}` })
-    .setTimestamp();
-
-  if (rsvp) {
-    if (rsvp.joining.length > 0) {
-      embed.addFields({ name: `✅ Joining (${rsvp.joining.length})`, value: rsvp.joining.join('\n'), inline: true });
-    }
-    if (rsvp.notJoining.length > 0) {
-      embed.addFields({ name: `❌ Not Joining (${rsvp.notJoining.length})`, value: rsvp.notJoining.join('\n'), inline: true });
-    }
-    if (rsvp.maybe.length > 0) {
-      embed.addFields({ name: `❓ Maybe (${rsvp.maybe.length})`, value: rsvp.maybe.join('\n'), inline: true });
-    }
-  }
-
-  return embed;
 }
 
 // ── AI caller ────────────────────────────────────────────────
@@ -215,6 +138,7 @@ function buildEventEmbed(event: StoredEvent, rsvp?: RSVPData): EmbedBuilder {
 async function callAI(
   content: string,
   apiKey: string,
+  events: GuildScheduledEvent[],
   log: { info: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; error: (...args: unknown[]) => void },
 ): Promise<AIResponse> {
   try {
@@ -227,7 +151,7 @@ async function callAI(
       body: JSON.stringify({
         model: KIMI_MODEL,
         messages: [
-          { role: 'system', content: buildSystemPrompt() },
+          { role: 'system', content: buildSystemPrompt(events) },
           { role: 'user', content },
         ],
         tools: TOOLS,
@@ -261,34 +185,6 @@ async function callAI(
   }
 }
 
-// ── RSVP helpers ─────────────────────────────────────────────
-
-async function fetchRSVPData(
-  message: Message,
-  botId: string,
-): Promise<RSVPData> {
-  const rsvp: RSVPData = { joining: [], notJoining: [], maybe: [] };
-
-  for (const emoji of RSVP_EMOJIS) {
-    const reaction = message.reactions.cache.get(emoji);
-    if (!reaction) continue;
-
-    const users = await reaction.users.fetch();
-    const names = users
-      .filter((u) => u.id !== botId)
-      .map((u) => {
-        const member = message.guild?.members.cache.get(u.id);
-        return member?.displayName ?? u.displayName ?? u.username;
-      });
-
-    if (emoji === '✅') rsvp.joining = names;
-    else if (emoji === '❌') rsvp.notJoining = names;
-    else if (emoji === '❓') rsvp.maybe = names;
-  }
-
-  return rsvp;
-}
-
 // ── Bot entry point ──────────────────────────────────────────
 
 export function startDiscordBot(log: {
@@ -297,15 +193,10 @@ export function startDiscordBot(log: {
   error: (...args: unknown[]) => void;
 }) {
   const token = process.env.DISCORD_BOT_TOKEN;
-  const channelId = process.env.DISCORD_CHANNEL_ID;
   const openrouterKey = process.env.OPENROUTER_API_KEY;
 
   if (!token) {
     log.warn('[Discord] DISCORD_BOT_TOKEN not set, skipping Discord bot startup');
-    return;
-  }
-  if (!channelId) {
-    log.warn('[Discord] DISCORD_CHANNEL_ID not set, skipping Discord bot startup');
     return;
   }
   if (!openrouterKey) {
@@ -318,11 +209,10 @@ export function startDiscordBot(log: {
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
-      GatewayIntentBits.GuildMessageReactions,
       GatewayIntentBits.GuildMembers,
       GatewayIntentBits.DirectMessages,
+      GatewayIntentBits.GuildScheduledEvents,
     ],
-    partials: [Partials.Message, Partials.Reaction, Partials.User, Partials.Channel],
   });
 
   client.once(Events.ClientReady, (readyClient) => {
@@ -354,7 +244,18 @@ export function startDiscordBot(log: {
       await message.channel.sendTyping();
     }
 
-    const aiResult = await callAI(content, openrouterKey, log);
+    // Pre-fetch guild scheduled events for context
+    let guildEvents: GuildScheduledEvent[] = [];
+    if (message.guild) {
+      try {
+        const fetched = await message.guild.scheduledEvents.fetch();
+        guildEvents = [...fetched.filter((e) => e.isScheduled()).values()];
+      } catch {
+        // ignore fetch errors — events context will just be empty
+      }
+    }
+
+    const aiResult = await callAI(content, openrouterKey, guildEvents, log);
 
     // If no tool calls, reply with AI text or a fallback
     if (aiResult.toolCalls.length === 0) {
@@ -367,6 +268,12 @@ export function startDiscordBot(log: {
     for (const tc of aiResult.toolCalls) {
       const args = JSON.parse(tc.function.arguments) as Record<string, string>;
 
+      // Guild-only guard for all event tools
+      if (!message.guild) {
+        await message.reply('Events can only be managed from a server channel.');
+        continue;
+      }
+
       switch (tc.function.name) {
         // ── CREATE EVENT ──────────────────────────────────
         case 'create_event': {
@@ -375,111 +282,83 @@ export function startDiscordBot(log: {
             break;
           }
 
-          const unixTime = Math.floor(new Date(args.event_time).getTime() / 1000);
-          const storedEvent: StoredEvent = {
-            messageId: '', // set after sending
-            channelId,
-            title: args.title,
-            description: args.description || '',
-            eventTime: unixTime,
-            createdBy: message.author.displayName,
-            createdById: message.author.id,
-          };
-
-          const embed = buildEventEmbed(storedEvent);
-
-          const targetChannel = await client.channels.fetch(channelId);
-          if (!targetChannel || !targetChannel.isTextBased()) {
-            log.error(`[Discord] Target channel ${channelId} not found or not text-based`);
-            await message.reply('Error: configured event channel not found.');
-            break;
+          try {
+            const startTime = new Date(args.event_time);
+            const endTime = new Date(startTime.getTime() + (Number(args.duration_hours) || 1) * 3600000);
+            const event = await message.guild.scheduledEvents.create({
+              name: args.title,
+              description: args.description || '',
+              scheduledStartTime: startTime,
+              scheduledEndTime: endTime,
+              privacyLevel: GuildScheduledEventPrivacyLevel.GuildOnly,
+              entityType: GuildScheduledEventEntityType.External,
+              entityMetadata: { location: 'In-game' },
+            });
+            await message.reply(`Event **${event.name}** created! Check the server events tab.`);
+            log.info(`[Discord] Event created: "${event.name}" at ${args.event_time} by ${message.author.tag}`);
+          } catch (err) {
+            log.error(`[Discord] Failed to create event: ${err}`);
+            await message.reply('Failed to create the event. Please try again.');
           }
-
-          const eventMessage = await (targetChannel as TextChannel).send({ embeds: [embed] });
-          storedEvent.messageId = eventMessage.id;
-          eventStore.set(eventMessage.id, storedEvent);
-
-          saveEvents();
-
-          await eventMessage.react('✅');
-          await eventMessage.react('❌');
-          await eventMessage.react('❓');
-
-          if (message.channelId !== channelId) {
-            await message.reply(`Event created in <#${channelId}>!`);
-          }
-
-          log.info(`[Discord] Event created: "${storedEvent.title}" at ${args.event_time} by ${message.author.tag}`);
           break;
         }
 
         // ── EDIT EVENT ────────────────────────────────────
         case 'edit_event': {
-          const eventId = args.event_id;
-          const stored = eventStore.get(eventId);
-          if (!stored) {
-            await message.reply("ISAC couldn't find that event. Use `view_events` to see tracked events.");
-            break;
-          }
-
-          if (args.title) stored.title = args.title;
-          if (args.description) stored.description = args.description;
-          if (args.event_time) stored.eventTime = Math.floor(new Date(args.event_time).getTime() / 1000);
-
           try {
-            const ch = (await client.channels.fetch(stored.channelId)) as TextChannel;
-            const msg = await ch.messages.fetch(stored.messageId);
-            const rsvp = await fetchRSVPData(msg, client.user!.id);
-            const embed = buildEventEmbed(stored, rsvp);
-            await msg.edit({ embeds: [embed] });
-            saveEvents();
-            await message.reply(`Event **${stored.title}** has been updated!`);
-            log.info(`[Discord] Event edited: "${stored.title}" (${eventId})`);
+            const event = await message.guild.scheduledEvents.fetch(args.event_id);
+            const updates: Record<string, unknown> = {};
+            if (args.title) updates.name = args.title;
+            if (args.description) updates.description = args.description;
+            if (args.event_time) {
+              updates.scheduledStartTime = new Date(args.event_time);
+              updates.scheduledEndTime = new Date(new Date(args.event_time).getTime() + 3600000);
+            }
+            await event.edit(updates);
+            await message.reply(`Event **${event.name}** updated!`);
+            log.info(`[Discord] Event edited: "${event.name}" (${args.event_id})`);
           } catch (err) {
-            log.error(`[Discord] Failed to edit event ${eventId}: ${err}`);
-            await message.reply('Failed to edit the event. The message may have been deleted.');
-            eventStore.delete(eventId);
-            saveEvents();
+            log.error(`[Discord] Failed to edit event ${args.event_id}: ${err}`);
+            await message.reply("ISAC couldn't find or update that event. It may no longer exist.");
           }
           break;
         }
 
         // ── DELETE EVENT ──────────────────────────────────
         case 'delete_event': {
-          const eventId = args.event_id;
-          const stored = eventStore.get(eventId);
-          if (!stored) {
-            await message.reply("ISAC couldn't find that event.");
-            break;
-          }
-
           try {
-            const ch = (await client.channels.fetch(stored.channelId)) as TextChannel;
-            const msg = await ch.messages.fetch(stored.messageId);
-            await msg.delete();
-            await message.reply(`Event **${stored.title}** has been deleted.`);
-            log.info(`[Discord] Event deleted: "${stored.title}" (${eventId})`);
+            const event = await message.guild.scheduledEvents.fetch(args.event_id);
+            const name = event.name;
+            await event.delete();
+            await message.reply(`Event **${name}** deleted.`);
+            log.info(`[Discord] Event deleted: "${name}" (${args.event_id})`);
           } catch (err) {
-            log.error(`[Discord] Failed to delete event ${eventId}: ${err}`);
-            await message.reply('Failed to delete the event. It may have already been removed.');
+            log.error(`[Discord] Failed to delete event ${args.event_id}: ${err}`);
+            await message.reply("ISAC couldn't find that event. It may have already been removed.");
           }
-          eventStore.delete(eventId);
-          saveEvents();
           break;
         }
 
         // ── VIEW EVENTS ──────────────────────────────────
         case 'view_events': {
-          if (eventStore.size === 0) {
-            await message.reply("No events are currently scheduled. Tell me about one and I'll create it!");
-            break;
-          }
+          try {
+            const events = await message.guild.scheduledEvents.fetch();
+            const upcoming = events.filter((e) => e.isScheduled());
 
-          const lines: string[] = [];
-          eventStore.forEach((ev) => {
-            lines.push(`**${ev.title}** — <t:${ev.eventTime}:F> (<t:${ev.eventTime}:R>) — created by ${ev.createdBy}`);
-          });
-          await message.reply(`📋 **Upcoming Events:**\n${lines.join('\n')}`);
+            if (upcoming.size === 0) {
+              await message.reply("No events are currently scheduled. Tell me about one and I'll create it!");
+              break;
+            }
+
+            const lines = upcoming.map((e) => {
+              const unix = Math.floor(e.scheduledStartTimestamp! / 1000);
+              return `**${e.name}** — <t:${unix}:F> (<t:${unix}:R>)`;
+            });
+            await message.reply(`📋 **Upcoming Events:**\n${[...lines.values()].join('\n')}`);
+          } catch (err) {
+            log.error(`[Discord] Failed to fetch events: ${err}`);
+            await message.reply('Failed to retrieve events. Please try again.');
+          }
           break;
         }
 
@@ -488,59 +367,6 @@ export function startDiscordBot(log: {
           break;
       }
     }
-  });
-
-  // ── Reaction handlers (RSVP tracking) ──────────────────
-
-  async function handleReactionUpdate(reaction: MessageReaction, user: User) {
-    // Ensure partials are fully fetched
-    if (reaction.partial) {
-      try {
-        await reaction.fetch();
-      } catch {
-        return;
-      }
-    }
-    if (reaction.message.partial) {
-      try {
-        await reaction.message.fetch();
-      } catch {
-        return;
-      }
-    }
-
-    // Only care about tracked event messages
-    const msgId = reaction.message.id;
-    const stored = eventStore.get(msgId);
-    if (!stored) return;
-
-    // Only care about RSVP emojis
-    const emoji = reaction.emoji.name;
-    if (!emoji || !(RSVP_EMOJIS as readonly string[]).includes(emoji)) return;
-
-    // Ignore bot's own reactions
-    if (user.id === client.user?.id) return;
-
-    try {
-      const msg = reaction.message as Message;
-      // Ensure guild members are cached for display name resolution
-      if (msg.guild) {
-        await msg.guild.members.fetch({ user: user.id }).catch(() => {});
-      }
-      const rsvp = await fetchRSVPData(msg, client.user!.id);
-      const embed = buildEventEmbed(stored, rsvp);
-      await msg.edit({ embeds: [embed] });
-    } catch (err) {
-      log.error(`[Discord] Failed to update RSVP embed for ${msgId}: ${err}`);
-    }
-  }
-
-  client.on(Events.MessageReactionAdd, async (reaction, user) => {
-    await handleReactionUpdate(reaction as MessageReaction, user as User);
-  });
-
-  client.on(Events.MessageReactionRemove, async (reaction, user) => {
-    await handleReactionUpdate(reaction as MessageReaction, user as User);
   });
 
   // ── Login ──────────────────────────────────────────────

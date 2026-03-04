@@ -59,6 +59,7 @@ let agentStates: Record<number, boolean> = {};
 let agentNameState: Record<number, string> = {};
 let overlayState: OverlayState = 'agents';
 let countdownInterval: ReturnType<typeof setInterval> | null = null;
+let inTravelMode = false;
 
 function setOverlayState(state: OverlayState) {
   overlayState = state;
@@ -193,8 +194,11 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
   } else if (data.type === 'ready_state') {
     applyAgentStates(data.agents ?? {}, data.names ?? {});
   } else if (data.type === 'countdown') {
-    startCountdown(data.timestamp, data.duration);
+    if (!inTravelMode) {
+      startCountdown(data.timestamp, data.duration);
+    }
   } else if (data.type === 'travel_mode') {
+    inTravelMode = data.active;
     if (data.active) {
       modeIndicator.classList.remove('hidden');
       modeIndicator.classList.remove('travel-ready');
@@ -207,6 +211,7 @@ ipcRenderer.on('overlay-update', (_event: unknown, data: OverlayMessage) => {
   } else if (data.type === 'travel_ready') {
     modeIndicator.classList.toggle('travel-ready', data.ready);
   } else if (data.type === 'reset') {
+    inTravelMode = false;
     if (countdownInterval) {
       clearInterval(countdownInterval);
       countdownInterval = null;

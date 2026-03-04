@@ -1,5 +1,4 @@
 # fly.toml - Fly.io configuration
-# Replace "shd-overlay-server" with your actual app name
 
 app = "shd-overlay-server"
 primary_region = "iad"
@@ -10,9 +9,6 @@ primary_region = "iad"
 [env]
   NODE_ENV = "production"
   PORT = "8080"
-  # Set these as Fly secrets:
-  #   fly secrets set SITE_URL=https://earnest-badger-244.convex.site
-  #   fly secrets set UPLOAD_API_KEY=your-secret-key
 
 [http_service]
   internal_port = 8080
@@ -26,12 +22,7 @@ primary_region = "iad"
     hard_limit = 1000
     soft_limit = 800
 
-[mounts]
-  source = "stream_data"
-  destination = "/data"
-  initial_size = 10
-
 [[vm]]
-  memory = "4096mb"
-  cpu_kind = "performance"
-  cpus = 2
+  memory = "256mb"
+  cpu_kind = "shared"
+  cpus = 1

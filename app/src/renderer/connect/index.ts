@@ -62,18 +62,8 @@ const readyBtn = document.getElementById('readyBtn') as HTMLButtonElement;
 const readySection = document.getElementById('readySection') as HTMLDivElement;
 const postRaidSection = document.getElementById('postRaidSection') as HTMLDivElement;
 const travelBtn = document.getElementById('travelBtn') as HTMLButtonElement;
-
-
-const streamBtn = document.getElementById('streamBtn') as HTMLButtonElement;
-const recordBtn = document.getElementById('recordBtn') as HTMLButtonElement;
-const recordFolderPath = document.getElementById('recordFolderPath') as HTMLSpanElement;
-const recordFolderBtn = document.getElementById('recordFolderBtn') as HTMLButtonElement;
-const windowPickerModal = document.getElementById('windowPickerModal') as HTMLDivElement;
-const windowPickerGrid = document.getElementById('windowPickerGrid') as HTMLDivElement;
-const windowPickerCancel = document.getElementById('windowPickerCancel') as HTMLButtonElement;
-const windowPickerStart = document.getElementById('windowPickerStart') as HTMLButtonElement;
-const resolutionToggle = document.getElementById('resolutionToggle') as HTMLDivElement;
-const fpsToggle = document.getElementById('fpsToggle') as HTMLDivElement;
+const autoRollToggle = document.getElementById('autoRollToggle') as HTMLInputElement;
+const autoStartToggle = document.getElementById('autoStartToggle') as HTMLInputElement;
 
 const devBadge = document.getElementById('devBadge') as HTMLDivElement;
 
@@ -85,7 +75,6 @@ const connectionStatus = document.getElementById('connectionStatus') as HTMLDivE
 const connectionText = document.getElementById('connectionText') as HTMLSpanElement;
 
 const KEYBINDS_STORAGE_KEY = 'shd-keybinds';
-const RECORDING_FOLDER_KEY = 'shd-recording-folder';
 
 interface KeybindsConfig {
   ready: string;
@@ -115,30 +104,12 @@ let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let raidState: 'ready' | 'started' = 'ready';
 let countdownEndTimer: ReturnType<typeof setTimeout> | null = null;
 let travelMode = false;
+let autoRollEnabled = localStorage.getItem('shd-auto-roll') !== 'false';
+let autoStartEnabled = localStorage.getItem('shd-auto-start') !== 'false';
 
 const DEFAULT_START_DELAY_SECONDS = 2.9;
 const STARTER_DELAY_MS = 3000; // Starter always acts at exactly 3 seconds
 const START_DELAY_STORAGE_KEY = 'shd-start-delay-seconds';
-
-// ── Streaming / Recording state ──────────────────────────────
-interface CaptureSource {
-  id: string;
-  name: string;
-  thumbnail: string;
-}
-
-interface QualitySettings {
-  width: number;
-  height: number;
-  fps: number;
-}
-
-let isStreaming = false;
-let isRecording = false;
-let recordingFolder: string | null = null;
-let selectedAudioDevice: string | null = null;
-let pendingCaptureResolve: ((result: { source: CaptureSource; quality: QualitySettings } | null) => void) | null = null;
-
 
 function updateConnectionIndicator(status: 'connected' | 'disconnected' | 'connecting', message: string) {
   if (connectionStatus && connectionText) {
@@ -248,7 +219,6 @@ function openKeybindsSettings(): void {
   const rollKeyBtn = document.getElementById('keybindRollKey') as HTMLButtonElement;
   rollKeyBtn.textContent = config.rollKey;
   rollKeyBtn.dataset.key = config.rollKey;
-  updateRecordFolderDisplay();
 
   nameStep.classList.add('hidden');
   settingsStep.classList.add('hidden');
@@ -370,317 +340,6 @@ function toggleFabMenu(): void {
   }
 }
 
-// ── Window Picker & Quality ─────────────────────────────────────
-
-function getPickerQuality(): QualitySettings {
-  const resBtn = resolutionToggle.querySelector('.toggle-btn.active') as HTMLButtonElement | null;
-  const fpsBtn = fpsToggle.querySelector('.toggle-btn.active') as HTMLButtonElement | null;
-  const res = resBtn?.dataset.value === '720' ? { width: 1280, height: 720 } : { width: 1920, height: 1080 };
-  const fps = fpsBtn?.dataset.value === '30' ? 30 : 60;
-  return { ...res, fps };
-}
-
-function setupToggleGroup(container: HTMLDivElement) {
-  const buttons = container.querySelectorAll('.toggle-btn');
-  buttons.forEach((btn) => {
-    btn.addEventListener('click', () => {
-      buttons.forEach((b) => b.classList.remove('active'));
-      btn.classList.add('active');
-    });
-  });
-}
-
-async function populateAudioDevices(): Promise<void> {
-  const audioSelect = document.getElementById('audioDeviceSelect') as HTMLSelectElement | null;
-  if (!audioSelect) return;
-  const devices: string[] = await ipcRenderer.invoke('get-audio-devices');
-  audioSelect.innerHTML = '<option value="">No Audio</option>';
-  for (const device of devices) {
-    const opt = document.createElement('option');
-    opt.value = device;
-    opt.textContent = device;
-    audioSelect.appendChild(opt);
-  }
-  // Restore previous selection if still available
-  if (selectedAudioDevice && devices.includes(selectedAudioDevice)) {
-    audioSelect.value = selectedAudioDevice;
-  } else {
-    selectedAudioDevice = null;
-    audioSelect.value = '';
-  }
-}
-
-function showWindowPicker(sources: CaptureSource[]): Promise<{ source: CaptureSource; quality: QualitySettings } | null> {
-  return new Promise((resolve) => {
-    pendingCaptureResolve = resolve;
-    let selectedSource: CaptureSource | null = null;
-
-    windowPickerGrid.innerHTML = '';
-    windowPickerStart.disabled = true;
-
-    // Populate audio device dropdown
-    populateAudioDevices();
-
-    // Reset quality toggles to defaults (1080p, 60fps)
-    resolutionToggle.querySelectorAll('.toggle-btn').forEach((b, i) => {
-      b.classList.toggle('active', i === 0);
-    });
-    fpsToggle.querySelectorAll('.toggle-btn').forEach((b, i) => {
-      b.classList.toggle('active', i === 1);
-    });
-
-    for (const source of sources) {
-      const item = document.createElement('button');
-      item.type = 'button';
-      item.className = 'window-picker-item';
-
-      const thumb = document.createElement('img');
-      thumb.className = 'window-picker-thumb';
-      thumb.src = source.thumbnail;
-      thumb.alt = source.name;
-
-      const name = document.createElement('span');
-      name.className = 'window-picker-name';
-      name.textContent = source.name;
-
-      item.appendChild(thumb);
-      item.appendChild(name);
-      item.addEventListener('click', () => {
-        windowPickerGrid.querySelectorAll('.window-picker-item').forEach((el) => el.classList.remove('selected'));
-        item.classList.add('selected');
-        selectedSource = source;
-        windowPickerStart.disabled = false;
-      });
-      windowPickerGrid.appendChild(item);
-    }
-
-    const startHandler = () => {
-      if (!selectedSource) return;
-      // Capture audio device selection before closing
-      const audioSelect = document.getElementById('audioDeviceSelect') as HTMLSelectElement | null;
-      selectedAudioDevice = audioSelect?.value || null;
-      windowPickerModal.classList.add('hidden');
-      windowPickerStart.removeEventListener('click', startHandler);
-      if (pendingCaptureResolve) {
-        pendingCaptureResolve({ source: selectedSource, quality: getPickerQuality() });
-        pendingCaptureResolve = null;
-      }
-    };
-    windowPickerStart.addEventListener('click', startHandler);
-
-    windowPickerModal.classList.remove('hidden');
-  });
-}
-
-/** Prompt the user to pick a window + quality settings. Returns null if cancelled. */
-async function promptCapture(): Promise<{ source: CaptureSource; quality: QualitySettings } | null> {
-  const sources: CaptureSource[] = await ipcRenderer.invoke('get-sources');
-  if (!sources || sources.length === 0) {
-    showError('No windows found to capture.');
-    return null;
-  }
-  return showWindowPicker(sources);
-}
-
-// ── FFmpeg-based Streaming ──────────────────────────────────────
-// FFmpeg runs in the main process (gdigrab capture + hardware H.264 encode).
-// Encoded MPEG-TS chunks arrive via IPC and are forwarded over WebSocket.
-
-let ffmpegActive = false;
-
-// Forward encoded chunks from main-process FFmpeg to the server
-ipcRenderer.on('ffmpeg-chunk', (_event: unknown, chunk: Buffer) => {
-  if (isStreaming && ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(chunk);
-  }
-});
-
-ipcRenderer.on('ffmpeg-stopped', (_event: unknown, _code: number) => {
-  console.log('[FFmpeg] Pipeline stopped');
-  ffmpegActive = false;
-  if (isStreaming) stopStreaming();
-  if (isRecording) stopRecording();
-});
-
-ipcRenderer.on('ffmpeg-error', (_event: unknown, msg: string) => {
-  console.error('[FFmpeg] Error:', msg);
-  showError(`Capture error: ${msg}`);
-  ffmpegActive = false;
-  if (isStreaming) {
-    isStreaming = false;
-    updateStreamButton();
-  }
-  if (isRecording) {
-    isRecording = false;
-    updateRecordButton();
-  }
-});
-
-function startFFmpeg(windowTitle: string, quality: QualitySettings, recordingPath?: string) {
-  ffmpegActive = true;
-  ipcRenderer.send('start-ffmpeg-stream', {
-    windowTitle,
-    width: quality.width,
-    height: quality.height,
-    fps: quality.fps,
-    recordingPath,
-    audioDevice: selectedAudioDevice || undefined,
-  });
-}
-
-function stopFFmpeg() {
-  if (ffmpegActive) {
-    ipcRenderer.send('stop-ffmpeg-stream');
-    ffmpegActive = false;
-  }
-}
-
-// ── Streaming ────────────────────────────────────────────────
-
-async function startStreaming() {
-  if (isStreaming) return;
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    showError('Not connected to server.');
-    return;
-  }
-
-  // If FFmpeg is already running (e.g. recording), just enable streaming flag
-  if (ffmpegActive) {
-    isStreaming = true;
-    updateStreamButton();
-    ws.send(JSON.stringify({ type: 'stream_start' }));
-    console.log('[Stream] Started (reusing active FFmpeg)');
-    return;
-  }
-
-  const result = await promptCapture();
-  if (!result) return;
-
-  isStreaming = true;
-  updateStreamButton();
-
-  ws.send(JSON.stringify({ type: 'stream_start' }));
-
-  // Build recording path if also recording
-  let recordingPath: string | undefined;
-  if (isRecording && recordingFolder) {
-    recordingPath = buildRecordingPath();
-  }
-
-  startFFmpeg(result.source.name, result.quality, recordingPath);
-  console.log('[Stream] Started');
-}
-
-function stopStreaming() {
-  if (!isStreaming) return;
-  isStreaming = false;
-  updateStreamButton();
-
-  if (ws && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'stream_stop' }));
-  }
-
-  // If not recording either, stop FFmpeg entirely
-  if (!isRecording) {
-    stopFFmpeg();
-  }
-
-  console.log('[Stream] Stopped');
-}
-
-function updateStreamButton() {
-  if (isStreaming) {
-    streamBtn.innerHTML = '<span class="live-dot"></span> Stop Stream';
-    streamBtn.classList.add('active');
-  } else {
-    streamBtn.textContent = 'Stream';
-    streamBtn.classList.remove('active');
-  }
-}
-
-// ── Recording ────────────────────────────────────────────────
-
-async function promptRecordingFolder(): Promise<string | null> {
-  const folder: string | null = await ipcRenderer.invoke('select-recording-folder');
-  if (folder) {
-    recordingFolder = folder;
-    localStorage.setItem(RECORDING_FOLDER_KEY, folder);
-    updateRecordFolderDisplay();
-  }
-  return folder;
-}
-
-function updateRecordFolderDisplay() {
-  if (recordingFolder) {
-    const parts = recordingFolder.replace(/\\/g, '/').split('/');
-    const display = parts.length > 2
-      ? '.../' + parts.slice(-2).join('/')
-      : recordingFolder;
-    recordFolderPath.textContent = display;
-    recordFolderPath.title = recordingFolder;
-  } else {
-    recordFolderPath.textContent = 'Not set';
-    recordFolderPath.title = '';
-  }
-}
-
-function buildRecordingPath(): string {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-  const agentName = selectedName ?? 'agent';
-  const safeName = agentName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  return `${recordingFolder}\\${safeName}_${timestamp}.mp4`;
-}
-
-async function startRecording() {
-  if (isRecording) return;
-
-  if (!recordingFolder) {
-    const folder = await promptRecordingFolder();
-    if (!folder) return;
-  }
-
-  // If FFmpeg is already running (streaming), we can't add recording mid-stream
-  // since the tee output is set at FFmpeg launch. Just record to a separate file
-  // on next start. For now, require picking before streaming.
-  if (ffmpegActive) {
-    showError('Cannot start recording while streaming. Stop stream first, then start both together.');
-    return;
-  }
-
-  const result = await promptCapture();
-  if (!result) return;
-
-  isRecording = true;
-  updateRecordButton();
-
-  const recordingPath = buildRecordingPath();
-  startFFmpeg(result.source.name, result.quality, recordingPath);
-  console.log('[Record] Started:', recordingPath);
-}
-
-function stopRecording() {
-  if (!isRecording) return;
-  isRecording = false;
-  updateRecordButton();
-
-  // If not streaming either, stop FFmpeg entirely
-  if (!isStreaming) {
-    stopFFmpeg();
-  }
-
-  console.log('[Record] Stopped');
-}
-
-function updateRecordButton() {
-  if (isRecording) {
-    recordBtn.innerHTML = '<span class="rec-dot"></span> Stop Rec';
-    recordBtn.classList.add('active');
-  } else {
-    recordBtn.textContent = 'Record';
-    recordBtn.classList.remove('active');
-  }
-}
-
 function connect() {
   // Clear any pending reconnect timer to prevent stacking
   if (reconnectTimer) {
@@ -737,7 +396,7 @@ function connect() {
       try {
         const message = JSON.parse(event.data) as WSMessage;
         console.log('[WS] Received:', message);
-        
+
         if (message.type === 'agent_assigned') {
           const assigned = message as AgentAssignedMessage;
           agentId = assigned.agentId;
@@ -768,7 +427,7 @@ function connect() {
           const travelMsg = message as { type: string; active: boolean };
           setTravelMode(travelMsg.active);
         } else if (message.type === 'execute_travel') {
-          if (isReady) {
+          if (isReady && autoStartEnabled) {
             ipcRenderer.send('start-space');
           }
         } else if (message.type === 'reset') {
@@ -781,14 +440,6 @@ function connect() {
           travelBtn.classList.remove('execute');
           setRaidState('ready');
           ipcRenderer.send('update-overlay', { type: 'reset' });
-        } else if (message.type === 'stream_error') {
-          console.error('[Stream] Server pipeline error:', message.message);
-          showError(String(message.message ?? 'Stream pipeline failed on server'));
-          if (isStreaming) {
-            isStreaming = false;
-            updateStreamButton();
-            if (!isRecording) stopFFmpeg();
-          }
         } else if (message.type === 'error') {
           updateStatus('disconnected', String(message.message ?? 'Server error'));
         }
@@ -804,10 +455,6 @@ function connect() {
 
 function disconnect() {
   intentionalDisconnect = true;
-
-  // Stop streaming/recording before disconnecting
-  if (isStreaming) stopStreaming();
-  if (isRecording) stopRecording();
 
   // Clear any pending reconnect timer
   if (reconnectTimer) {
@@ -897,14 +544,16 @@ function scheduleStartActions(timestamp: number, starterAgentId: number) {
   if (!agentId) {
     return;
   }
-  
+
   if (agentId === starterAgentId) {
+    if (!autoStartEnabled) return;
     // Starter always acts at exactly 3 seconds after timestamp
     const delay = Math.max(0, timestamp + STARTER_DELAY_MS - Date.now());
     setTimeout(() => {
       ipcRenderer.send('start-space');
     }, delay);
   } else {
+    if (!autoRollEnabled) return;
     // Others use the customizable delay (default 2.9 seconds)
     const delay = Math.max(0, timestamp + startDelayMs - Date.now());
     setTimeout(() => {
@@ -1035,32 +684,16 @@ travelBtn.addEventListener('click', () => {
   }
 });
 
-streamBtn.addEventListener('click', () => {
-  if (isStreaming) {
-    stopStreaming();
-  } else {
-    startStreaming();
-  }
+// Toggle switches for auto roll / auto start
+autoRollToggle.checked = autoRollEnabled;
+autoStartToggle.checked = autoStartEnabled;
+autoRollToggle.addEventListener('change', () => {
+  autoRollEnabled = autoRollToggle.checked;
+  localStorage.setItem('shd-auto-roll', String(autoRollEnabled));
 });
-
-recordBtn.addEventListener('click', () => {
-  if (isRecording) {
-    stopRecording();
-  } else {
-    startRecording();
-  }
-});
-
-recordFolderBtn.addEventListener('click', () => {
-  promptRecordingFolder();
-});
-
-windowPickerCancel.addEventListener('click', () => {
-  windowPickerModal.classList.add('hidden');
-  if (pendingCaptureResolve) {
-    pendingCaptureResolve(null);
-    pendingCaptureResolve = null;
-  }
+autoStartToggle.addEventListener('change', () => {
+  autoStartEnabled = autoStartToggle.checked;
+  localStorage.setItem('shd-auto-start', String(autoStartEnabled));
 });
 
 setupKeybindCapture(keybindReadyBtn, 'ready');
@@ -1122,9 +755,6 @@ rollKeyBtn.addEventListener('click', () => {
   document.addEventListener('mousedown', cancelHandler, { capture: true });
 });
 
-setupToggleGroup(resolutionToggle);
-setupToggleGroup(fpsToggle);
-
 keybindsSettingsBackBtn.addEventListener('click', closeKeybindsSettings);
 saveKeybindsBtn.addEventListener('click', saveKeybindsSettings);
 
@@ -1146,15 +776,9 @@ setDelaySeconds(initialKeybinds.rollDelaySeconds);
 startDelayMs = initialKeybinds.rollDelaySeconds * 1000;
 ipcRenderer.send('keybinds-config', initialKeybinds);
 
-// Load saved recording folder
-recordingFolder = localStorage.getItem(RECORDING_FOLDER_KEY);
-updateRecordFolderDisplay();
-
 // Auto-connect on load
 document.addEventListener('DOMContentLoaded', () => {
   updateReadyButton();
-  updateStreamButton();
-  updateRecordButton();
   const savedName = localStorage.getItem('shd-display-name');
   if (savedName) {
     nameInput.value = savedName;
